@@ -167,6 +167,11 @@ ExpansionResult QueryExpander::expand(const std::string& query) const {
     if (!client_ || maxTerms_ == 0) {
         return finish(ExpansionStatus::Disabled);
     }
+    if (core::TextProcessor::uniqueTokens(query).empty()) {
+        // Nothing to expand (only stop words / punctuation): asking the LLM would
+        // only produce unrelated terms, so the query is left as is.
+        return finish(ExpansionStatus::Ok);
+    }
     try {
         if (!client_->isAvailable()) {
             return finish(ExpansionStatus::Fallback, "Ollama is unavailable");

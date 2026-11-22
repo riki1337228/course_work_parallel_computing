@@ -1,0 +1,21 @@
+query,expand,expansion_status,expanded_terms,total_matches,top_doc,top_score,search_time_ms,time_ms
+car,False,disabled,,5156,document_004683,0.053616,0.924,0.978
+car,True,ok,automobile; vehicle; sedan,12747,document_014624,0.101475,2.08,8398.872
+artificial intelligence machine learning,False,disabled,,16074,document_019735,0.184786,2.234,2.256
+artificial intelligence machine learning,True,ok,deep learning; neural networks; pattern recognition; data science; algorithmics; computational statistics,19999,document_017062,0.226319,4.203,2791.002
+climate change,False,disabled,,7773,document_004366,0.130868,1.292,1.317
+climate change,True,ok,global warming; weather patterns; environmental impact,20000,document_007814,0.160453,2.591,1708.743
+heart disease vaccine,False,disabled,,9792,document_016332,0.136086,1.872,1.914
+heart disease vaccine,True,ok,cardiovascular; infectious; immunization,10614,document_016332,0.139952,1.755,1794.743
+stock market inflation,False,disabled,,7769,document_004474,0.164192,2.28,2.316
+stock market inflation,True,ok,economy; interests; crisis,9789,document_003495,0.177793,3.08,1628.063
+black hole galaxy,False,disabled,,7849,document_016741,0.155227,1.691,1.708
+black hole galaxy,True,ok,nebula; supernova; quasar; star,13805,document_007226,0.175951,2.911,2036.533
+thread mutex deadlock,False,disabled,,10561,document_013162,0.13793,2.569,2.584
+thread mutex deadlock,True,ok,condition variable; lock; race condition; synchronization,11979,document_013162,0.142414,2.233,1943.262
+pasta recipe,False,disabled,,7742,document_015549,0.105844,2.75,2.759
+pasta recipe,True,ok,dish; meal; dinner; food,12425,document_015130,0.118927,2.121,1948.699
+Lonimlexon,False,disabled,,1,document_019735,0.093363,0.091,0.096
+Lonimlexon,True,ok,lonimexon,1,document_019735,0.093363,0.121,1355.91
+the and of,False,disabled,,0,-,0,0.0,0.004
+the and of,True,ok,,0,-,0,0.001,0.006

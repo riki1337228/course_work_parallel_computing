@@ -118,6 +118,16 @@ TEST(QueryExpanderTest, DisabledWithoutClientOrZeroTerms) {
     EXPECT_EQ(QueryExpander(std::make_shared<FakeLlmClient>(), 0).expand("x").status, ExpansionStatus::Disabled);
 }
 
+TEST(QueryExpanderTest, StopWordOnlyQueryIsNotSentToLlm) {
+    auto llm = std::make_shared<FakeLlmClient>();
+    llm->setResponse(R"({"expanded_terms":["center","beginning"]})");
+    QueryExpander expander(llm, 6);
+    const auto result = expander.expand("the and of");
+    EXPECT_EQ(result.status, ExpansionStatus::Ok);
+    EXPECT_TRUE(result.expandedTerms.empty());
+    EXPECT_EQ(llm->calls.load(), 0);
+}
+
 TEST(QueryExpanderTest, StatusToString) {
     EXPECT_EQ(search::ollama::toString(ExpansionStatus::Ok), "ok");
     EXPECT_EQ(search::ollama::toString(ExpansionStatus::Fallback), "fallback");

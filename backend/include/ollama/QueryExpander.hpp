@@ -34,6 +34,8 @@ public:
     QueryExpander(std::shared_ptr<LlmClient> client, std::size_t maxTerms);
 
     /// Never throws: every failure results in status == Fallback with a reason.
+    /// A query without indexable tokens (only stop words) is not sent to the LLM:
+    /// the result is status == Ok with no expanded terms.
     ExpansionResult expand(const std::string& query) const;
 
     /// Structured prompt requiring a JSON object {"original": ..., "expanded_terms": [...]}.
