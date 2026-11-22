@@ -1,0 +1,179 @@
+classDiagram
+    direction TB
+
+    namespace core {
+        class Config {
+            +string datasetPath
+            +size_t requestThreads
+            +size_t indexThreads
+            +string ollamaUrl
+            +string ollamaModel
+            +double ollamaTimeoutSec
+            +fromEnvironment()$ Config
+        }
+        class Document {
+            +DocId id
+            +string name
+            +path path
+            +uint32 tokenCount
+            +uint64 sizeBytes
+        }
+        class DocumentLoader {
+            -path root_
+            +documentsDirectory() path
+            +listDocuments() vector~path~
+            +readFile(path)$ string
+            +documentName(path)$ string
+        }
+        class TextProcessor {
+            +normalizeInPlace(string&)$
+            +forEachToken(string_view, Sink)$
+            +tokenize(string_view)$ vector~string~
+            +isStopWord(string_view)$ bool
+        }
+    }
+
+    namespace threading {
+        class ThreadPool {
+            -vector~thread~ workers_
+            -queue~function~ tasks_
+            -mutex mutex_
+            -condition_variable taskAvailable_
+            -condition_variable allDone_
+            -bool stopping_
+            +submit(F, Args) future~R~
+            +post(function)
+            +waitAll()
+            +shutdown()
+        }
+    }
+
+    namespace index {
+        class Posting {
+            +DocId docId
+            +uint32 termFrequency
+        }
+        class InvertedIndex {
+            -vector~Shard~ shards_
+            -shared_mutex documentsMutex_
+            -vector~Document~ documents_
+            +addDocument(name, path, text) DocId
+            +setDocument(Document)
+            +merge(LocalIndex&&)
+            +finalize(ThreadPool*)
+            +visitPostings(term, visitor) bool
+            +documentFrequency(term) size_t
+            +termFrequency(term, DocId) uint32
+            +findAll(terms) vector~DocId~
+            +findAny(terms) vector~DocId~
+            +snippet(DocId, terms) string
+            +documentCount() size_t
+        }
+        class Shard {
+            +shared_mutex mutex
+            +unordered_map~string, vector~Posting~~ terms
+        }
+        class IndexBuilder {
+            -size_t threads_
+            -size_t batchSize_
+            +build(datasetRoot, BuildStats*) shared_ptr~InvertedIndex~
+            +autoBatchSize(docs, threads)$ size_t
+        }
+    }
+
+    namespace engine {
+        class SearchEngine {
+            -mutex mutex_
+            -shared_ptr~InvertedIndex~ index_
+            +setIndex(shared_ptr)
+            +search(terms, limit) SearchResponse
+            +rank(index, terms, limit)$ SearchResponse
+            +buildQueryTerms(query, expanded, weight)$ vector~QueryTerm~
+        }
+        class SearchService {
+            -SearchEngine engine_
+            -QueryExpander expander_
+            -ThreadPool requestPool_
+            -ThreadPool controlPool_
+            -atomic~bool~ indexing_
+            +buildIndex(threads) IndexBuildResult
+            +buildIndexAsync(threads, onDone)
+            +expandQuery(query, enabled) ExpansionResult
+            +keywordSearch(query, terms, limit) SearchResponse
+            +runPipeline(query, limit, expand) PipelineResult
+            +stats() ServiceStats
+            +ollamaAvailable() bool
+        }
+    }
+
+    namespace ollama {
+        class LlmClient {
+            <<interface>>
+            +isAvailable() bool
+            +generate(prompt, error*) optional~string~
+            +model() string
+        }
+        class OllamaClient {
+            -EventLoopThread loopThread_
+            -mutex refreshMutex_
+            -bool lastAvailable_
+            +isAvailable() bool
+            +generate(prompt, error*) optional~string~
+            +checkNow() bool
+        }
+        class OllamaProtocol {
+            +buildGenerateRequest(model, prompt)$ string
+            +extractResponseText(body)$ optional~string~
+            +modelListed(tags, model)$ bool
+        }
+        class QueryExpander {
+            -shared_ptr~LlmClient~ client_
+            -size_t maxTerms_
+            +expand(query) ExpansionResult
+            +buildPrompt(query, maxTerms)$ string
+            +parseResponse(text, query, maxTerms)$ optional~vector~
+        }
+    }
+
+    namespace api {
+        class ControllerBase {
+            #shared_ptr~SearchService~ service_
+        }
+        class HealthController { +handle(req, callback) }
+        class IndexController { +handle(req, callback) }
+        class SearchController {
+            +handle(req, callback)
+            +parseRequest(json, config, error)$ optional~SearchRequest~
+        }
+        class StatsController { +handle(req, callback) }
+        class SearchWebSocket {
+            +handleNewConnection(req, conn)
+            +handleNewMessage(conn, message, type)
+            +handleConnectionClosed(conn)
+        }
+    }
+
+    DocumentLoader ..> Document : creates metadata
+    IndexBuilder ..> DocumentLoader : lists / reads files
+    IndexBuilder ..> TextProcessor : tokenizes
+    IndexBuilder ..> ThreadPool : N workers
+    IndexBuilder ..> InvertedIndex : builds
+    InvertedIndex *-- "64" Shard
+    Shard o-- Posting
+    InvertedIndex o-- Document
+    SearchEngine o-- InvertedIndex : immutable snapshot
+    SearchService *-- SearchEngine
+    SearchService *-- QueryExpander
+    SearchService *-- "2" ThreadPool : request + control pools
+    SearchService ..> IndexBuilder
+    SearchService --> Config
+    QueryExpander --> LlmClient
+    LlmClient <|.. OllamaClient
+    OllamaClient ..> OllamaProtocol
+    ControllerBase <|-- HealthController
+    ControllerBase <|-- IndexController
+    ControllerBase <|-- SearchController
+    ControllerBase <|-- StatsController
+    ControllerBase --> SearchService
+    SearchWebSocket --> SearchService
+    SearchWebSocket ..> SearchController : reuses validation

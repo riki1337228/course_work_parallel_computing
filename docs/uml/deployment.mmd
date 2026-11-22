@@ -1,0 +1,32 @@
+%% Deployment Diagram: Docker Compose topology
+flowchart LR
+    browser["🖥️ Browser client<br/>Web UI (HTML/CSS/JS)"]
+    cli["⌨️ CLI client<br/>search (C++)"]
+
+    subgraph host["Docker host (Docker Desktop / Linux)"]
+        port["host port :8080"]
+        subgraph net["Docker network: search-net (bridge)"]
+            server["«container» search-server<br/>C++20 · Drogon · ThreadPool<br/>REST /api/* · WS /ws/search · static UI<br/>+ CLI binary /usr/local/bin/search"]
+            ollama["«container» ollama<br/>ollama/ollama:0.12.6<br/>:11434 (internal only)"]
+            ollamaInit["«one-shot» ollama-init<br/>ollama pull qwen2.5:3b + warm-up"]
+            datasetInit["«one-shot» dataset-init<br/>python:3.12-slim<br/>generate_dataset.py"]
+            tools["«profile tools» tests / tsan / e2e / benchmark"]
+        end
+        dataset[("«volume» dataset<br/>/data/documents/*.txt<br/>/data/metadata.json")]
+        models[("«volume» ollama-models<br/>/root/.ollama")]
+        bench[["bind mount ./docs/benchmarks"]]
+    end
+
+    browser -- "HTTP + WebSocket" --> port
+    cli -- "HTTP POST /api/search" --> port
+    port --> server
+    server -- "HTTP POST /api/generate<br/>GET /api/tags (http://ollama:11434)" --> ollama
+    ollamaInit -- "pull model" --> ollama
+    datasetInit -- "writes (rw)" --> dataset
+    server -- "reads (ro)" --> dataset
+    ollama --- models
+    tools -- "HTTP (http://search-server:8080)" --> server
+    tools --- bench
+
+    datasetInit -. "service_completed_successfully" .-> server
+    ollama -. "service_healthy" .-> ollamaInit

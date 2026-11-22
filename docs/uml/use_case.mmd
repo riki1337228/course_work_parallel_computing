@@ -1,0 +1,32 @@
+%% Use Case Diagram (Mermaid has no native use-case type: actors = stadium nodes, use cases = ellipse-like nodes)
+flowchart LR
+    user(["👤 User<br/>(Web browser)"])
+    cliUser(["👤 User<br/>(CLI client)"])
+    admin(["👤 Operator / Researcher<br/>(curl, benchmark scripts)"])
+    ollama(["🤖 Ollama<br/>(qwen2.5:3b)"])
+
+    subgraph system["Parallel Search System"]
+        direction TB
+        uc1(("Search documents<br/>by keywords"))
+        uc2(("Watch pipeline stages<br/>(WebSocket)"))
+        uc3(("Expand query<br/>with LLM"))
+        uc4(("Fallback to plain<br/>keyword search"))
+        uc5(("View system status<br/>(health, documents)"))
+        uc6(("Build / rebuild index<br/>with N threads"))
+        uc7(("View index statistics"))
+        uc8(("Run benchmarks<br/>& build charts"))
+    end
+
+    user --- uc1
+    user --- uc2
+    user --- uc5
+    cliUser --- uc1
+    admin --- uc6
+    admin --- uc7
+    admin --- uc8
+    admin --- uc5
+    uc1 -. "«include»" .-> uc3
+    uc2 -. "«include»" .-> uc1
+    uc4 -. "«extend» (Ollama unavailable,<br/>timeout, invalid answer)" .-> uc3
+    uc8 -. "«include»" .-> uc6
+    uc3 --- ollama

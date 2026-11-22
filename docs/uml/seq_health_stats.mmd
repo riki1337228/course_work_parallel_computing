@@ -1,0 +1,34 @@
+%% Sequence: status polling of the Web UI (GET /api/health, GET /api/stats) and system startup
+sequenceDiagram
+    autonumber
+    participant DC as docker compose
+    participant DI as dataset-init
+    participant O as ollama
+    participant S as search-server (main)
+    participant UI as Web UI
+    participant HC as HealthController
+    participant CP as controlPool
+    participant OC as OllamaClient
+    participant ST as StatsController
+
+    DC->>DI: start (generate_dataset.py)
+    DI->>DI: skip if metadata.json matches, else generate 20 000 docs
+    DI-->>DC: exit 0 (service_completed_successfully)
+    DC->>O: start (healthcheck: ollama list)
+    DC->>S: start (after dataset-init)
+    S->>S: register routes, buildIndexAsync(INDEX_THREADS)
+    Note over S: /api/search returns 503 index_not_ready<br/>until the first build is published
+
+    loop every 5 s
+        UI->>HC: GET /api/health
+        HC->>CP: post(check)
+        CP->>OC: isAvailable()
+        alt cache older than OLLAMA_HEALTH_TTL_SEC
+            OC->>O: GET /api/tags (timeout 2 s)
+            O-->>OC: models list → is qwen2.5:3b present?
+        end
+        OC-->>CP: true / false
+        CP-->>UI: 200 {"status":"ok","ollama":true,"index_ready":true,"model":"qwen2.5:3b"}
+        UI->>ST: GET /api/stats
+        ST-->>UI: 200 {"documents":20000,"index_build_time_ms":...,"threads_used":8,...}
+    end

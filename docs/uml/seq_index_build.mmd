@@ -1,0 +1,48 @@
+%% Sequence: POST /api/index (also used by auto-indexing at startup via SearchService::buildIndexAsync)
+sequenceDiagram
+    autonumber
+    actor Op as Operator / main()
+    participant IC as IndexController
+    participant CP as controlPool (ThreadPool, 2 workers)
+    participant SS as SearchService
+    participant IB as IndexBuilder
+    participant DL as DocumentLoader
+    participant TP as ThreadPool (N workers)
+    participant W as Worker thread i
+    participant II as InvertedIndex (64 shards)
+    participant SE as SearchEngine
+
+    Op->>IC: POST /api/index {"threads": N}
+    IC->>IC: validate JSON, 1 <= N <= MAX_INDEX_THREADS
+    alt invalid
+        IC-->>Op: 400 {"error":"invalid_threads"}
+    else build already running
+        IC-->>Op: 409 {"error":"indexing_in_progress"}
+    end
+    IC->>CP: post(build task)
+    Note over IC: event loop released immediately
+    CP->>SS: buildIndex(N)
+    SS->>SS: indexing_.compare_exchange(false → true)
+    SS->>IB: build(DATASET_PATH)
+    IB->>DL: listDocuments() (sorted → DocId = position)
+    DL-->>IB: 20 000 paths
+    IB->>TP: create pool with N threads
+    loop for every batch of B documents
+        IB->>TP: submit(processBatch(begin, end))
+    end
+    par each worker independently
+        TP->>W: next batch from the queue
+        loop documents of the batch
+            W->>DL: readFile(path)
+            W->>W: normalize + tokenize + count TF (no locks)
+            W->>II: setDocument(meta) [documentsMutex_ unique, short]
+        end
+        W->>II: merge(LocalIndex) [each shard locked once]
+    end
+    IB->>TP: wait for all futures
+    IB->>II: finalize(pool) — parallel sort of posting lists
+    IB-->>SS: shared_ptr<InvertedIndex>, BuildStats
+    SS->>SE: setIndex(new snapshot) — atomic publication
+    Note over SE: running searches keep the old snapshot<br/>until they finish
+    SS-->>CP: IndexBuildResult
+    CP-->>Op: 200 {"status":"ok","documents_indexed":20000,"time_ms":2695.8,"threads_used":8}

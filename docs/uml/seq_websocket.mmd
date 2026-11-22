@@ -1,0 +1,35 @@
+%% Sequence: WebSocket /ws/search used by the Web UI
+sequenceDiagram
+    autonumber
+    actor U as User
+    participant UI as Web UI (app.js)
+    participant WS as SearchWebSocket
+    participant RP as requestPool (ThreadPool)
+    participant SS as SearchService
+    participant O as Ollama
+
+    U->>UI: types query, clicks Search
+    UI->>WS: connect ws://host:8080/ws/search
+    WS->>WS: handleNewConnection: context = {busy: false}
+    UI->>UI: stage 1 active, "Expanding query…"
+    UI->>WS: {"query":"car","limit":10,"expand":true}
+    WS->>WS: parse + validate (same rules as REST)
+    alt invalid JSON / query
+        WS-->>UI: {"stage":"error","data":{"error":"invalid_json",...}}
+    else a search already runs on this connection
+        WS-->>UI: {"stage":"error","data":{"error":"search_in_progress",...}}
+    end
+    WS->>RP: post(task) — busy = true
+    RP->>SS: expandQuery(query)
+    SS->>O: POST /api/generate (or fallback)
+    O-->>SS: expanded terms
+    RP-->>UI: {"stage":"query_expansion","data":{"original":"car","expanded_terms":[...],"status":"ok",...}}
+    UI->>UI: stage 1 done, show term chips, stage 2 active, "Searching index…"
+    RP->>SS: keywordSearch(query, expanded_terms, limit)
+    SS-->>RP: SearchResponse
+    RP-->>UI: {"stage":"keyword_search","data":{"results":[...],"time_ms":2.8,"total_matches":12747}}
+    UI->>UI: stage 2 done, render result cards
+    RP-->>UI: {"stage":"done"}
+    RP->>RP: busy = false
+    UI->>UI: stage 3 done, "Search completed."
+    Note over RP,UI: All three frames are sent by ONE task in sequence,<br/>so the order query_expansion → keyword_search → done is guaranteed.

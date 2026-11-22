@@ -1,0 +1,45 @@
+%% Sequence: POST /api/search (Web/CLI client) with Ollama query expansion and fallback
+sequenceDiagram
+    autonumber
+    actor C as Client (CLI `search` / curl)
+    participant L as Drogon event loop
+    participant SC as SearchController
+    participant RP as requestPool (ThreadPool)
+    participant SS as SearchService
+    participant QE as QueryExpander
+    participant OC as OllamaClient
+    participant O as Ollama (qwen2.5:3b)
+    participant SE as SearchEngine
+    participant II as InvertedIndex
+
+    C->>L: POST /api/search {"query":"car","mode":"keyword","limit":10}
+    L->>SC: handle(request)
+    SC->>SC: parseRequest(): query, mode, limit, expand
+    alt validation error
+        SC-->>C: 400 {"error":"invalid_query" | "invalid_mode" | ...}
+    else index not built
+        SC-->>C: 503 {"error":"index_not_ready"}
+    end
+    SC->>RP: post(pipeline task)
+    Note over L: event loop is free for other clients
+    RP->>SS: runPipeline(query, limit, expand)
+    SS->>QE: expand(query)
+    QE->>OC: isAvailable() (cached 5 s)
+    alt Ollama available
+        QE->>OC: generate(JSON prompt)
+        OC->>O: POST /api/generate {"format":"json","stream":false}
+        O-->>OC: {"response": "{expanded_terms: [...]}"}
+        OC-->>QE: response text
+        QE->>QE: parseResponse(): JSON, sanitize, dedupe, ≤ 6 terms
+        QE-->>SS: status = ok, expanded_terms
+    else unavailable / timeout (30 s) / invalid JSON
+        QE-->>SS: status = fallback, fallback_reason
+        Note over SS: logged as WARN, search continues
+    end
+    SS->>SE: search(buildQueryTerms(query, expanded, w = 0.5), limit)
+    SE->>II: visitDocumentLengths() + visitPostings(term) [shared locks]
+    SE->>SE: TF-IDF accumulation, partial_sort top-K
+    SE->>II: snippet(docId, terms) (reads file)
+    SE-->>SS: SearchResponse
+    SS-->>RP: PipelineResult
+    RP-->>C: 200 {"results":[...],"time_ms":..,"expansion_status":"ok",...}
