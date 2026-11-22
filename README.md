@@ -67,7 +67,7 @@ docker compose up
 - **WebSocket** `/ws/search`: етапи `query_expansion → keyword_search → done`.
 - **CLI-клієнт** `search` та адаптивний **Web UI** з візуалізацією pipeline.
 - Автоматична генерація датасету, завантаження моделі та побудова індексу в Docker Compose.
-- 96 unit/concurrency тестів (також під ThreadSanitizer), 28 інтеграційних тестів (HTTP + WebSocket),
+- 97 unit/concurrency тестів (також під ThreadSanitizer), 28 інтеграційних тестів (HTTP + WebSocket),
   E2E-перевірка запущеного стеку, benchmark із графіками.
 
 ## 3. Архітектура
@@ -144,7 +144,7 @@ course_work_parallel_computing/
 │   ├── uml/                  UML (Mermaid + PNG)
 │   ├── benchmarks/           CSV, JSON та PNG з фактичними результатами
 │   ├── prompts/              журнал використаних промптів ШІ
-│   ├── report/               пояснювальна записка (DOCX) і зображення
+│   ├── report/               пояснювальна записка (DOCX + PDF), генератор build_report.js, зображення
 │   └── ACCEPTANCE_CHECKLIST.md
 ├── docker/{dataset,tools}/Dockerfile
 ├── data/.gitkeep             датасет не зберігається в Git (Docker volume)
@@ -587,7 +587,8 @@ for _ in range(3):
 - **Захист від некоректної відповіді:** парсер приймає JSON-об'єкт навіть з текстом або markdown навколо,
   відкидає нерядкові елементи, обрізає терміни до `[a-z0-9 -]`, відкидає терміни довші за 40 символів,
   дублікати, терміни, що повторюють запит або складаються лише зі стоп-слів, і обмежує кількість
-  до `MAX_EXPANSION_TERMS`.
+  до `MAX_EXPANSION_TERMS`. Запит лише зі стоп-слів до моделі не надсилається (інакше вона «вигадує» нерелевантні
+  терміни): відповідь має `expansion_status: "ok"` і порожній `expanded_terms`.
 - **Тайм-аути:** генерація — `OLLAMA_TIMEOUT_SEC` (30 с), перевірка доступності — 2 с.
   Нескінченне очікування неможливе.
 - **Fallback:** Ollama недоступна, HTTP-помилка, тайм-аут або невалідна відповідь означають
@@ -732,7 +733,7 @@ CLI показує `Expanded: Ollama unavailable - fallback to plain keyword sea
 | `InvertedIndexTest` | posting lists, TF/DF, merge, finalize, AND/OR, snippet, неіснуючий документ | 13 |
 | `IndexBuilderTest` | усі документи, детерміновані DocId, **однаковий індекс для 1/2/4/8/16 потоків**, порожній/відсутній датасет | 8 |
 | `SearchEngineTest` | формула IDF/TF-IDF, сортування, limit, ваги розширення, пошук без індексу | 11 |
-| `QueryExpanderTest` | парсер JSON (текст навколо, масив, некоректні відповіді, санітизація, ліміт), промпт, fallback | 14 |
+| `QueryExpanderTest` | парсер JSON (текст навколо, масив, некоректні відповіді, санітизація, ліміт), промпт, fallback, запит лише зі стоп-слів не надсилається в LLM | 15 |
 | `OllamaProtocolTest` | тіло `/api/generate`, розбір `response`/`error`, наявність моделі | 4 |
 | `SearchServiceTest` | pipeline, fallback, disabled, помилки датасету, перебудова | 7 |
 | `ConcurrencyTest` | конкурентний `addDocument` без втрат, паралельна = послідовна побудова, конкурентні читачі, читачі + писачі, пошук під час перебудови, одна побудова одночасно | 7 |
@@ -747,8 +748,8 @@ docker compose --profile tools run --rm tsan     # unit + concurrency під Thr
 docker compose --profile tools run --rm e2e      # E2E проти запущеного `docker compose up`
 ```
 
-Останній результат: `tests` — **97/97** ctest-тестів (96 unit/concurrency + інтеграційний набір
-із 28 тестів); `tsan` — **96/96**, жодного звіту ThreadSanitizer; `e2e` — **23/23**.
+Останній результат: `tests` — **98/98** ctest-тестів (97 unit/concurrency + інтеграційний набір
+із 28 тестів); `tsan` — **97/97**, жодного звіту ThreadSanitizer; `e2e` — **23/23**.
 
 > TSan з GCC 13 несумісний з високою ентропією ASLR сучасних ядер. Тому ціль `tsan` запускає ctest
 > через `setarch -R`, і сервісу потрібен `seccomp=unconfined` (уже прописано в compose).
