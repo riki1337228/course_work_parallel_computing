@@ -110,6 +110,11 @@ bool parseArgs(int argc, char** argv, Options& options) {
     while (!options.server.empty() && options.server.back() == '/') {
         options.server.pop_back();
     }
+    // "localhost" may resolve to ::1 first while the server listens on IPv4 only.
+    const std::string localhost = "://localhost";
+    if (const auto pos = options.server.find(localhost); pos != std::string::npos) {
+        options.server.replace(pos, localhost.size(), "://127.0.0.1");
+    }
     return true;
 }
 

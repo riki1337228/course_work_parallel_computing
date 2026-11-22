@@ -39,8 +39,8 @@ std::string QueryExpander::buildPrompt(const std::string& query, std::size_t max
     prompt += "- Format: {\"original\": <the query>, \"expanded_terms\": [<term>, ...]}\n";
     prompt += "- At most " + std::to_string(maxTerms) + " terms; each term is 1-2 lowercase English words.\n";
     prompt += "- Do not repeat words of the original query. No explanations.\n";
-    prompt += "Example: query \"car\" -> {\"original\": \"car\", \"expanded_terms\": ";
-    prompt += "[\"automobile\", \"vehicle\", \"motor vehicle\", \"transport\"]}\n";
+    prompt += "Example: query \"doctor\" -> {\"original\": \"doctor\", \"expanded_terms\": ";
+    prompt += "[\"physician\", \"medic\", \"clinician\", \"surgeon\"]}\n";
     prompt += "User query: " + quoted + "\n";
     return prompt;
 }
