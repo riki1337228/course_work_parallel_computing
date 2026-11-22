@@ -8,7 +8,8 @@ SearchService::SearchService(core::Config config, std::shared_ptr<ollama::LlmCli
     : config_(std::move(config)),
       llm_(std::move(llm)),
       expander_(llm_, config_.maxExpansionTerms),
-      requestPool_(std::make_unique<threading::ThreadPool>(config_.requestThreads)) {}
+      requestPool_(std::make_unique<threading::ThreadPool>(config_.requestThreads)),
+      controlPool_(std::make_unique<threading::ThreadPool>(2)) {}
 
 SearchService::~SearchService() {
     shutdown();
@@ -53,12 +54,17 @@ IndexBuildResult SearchService::buildIndex(std::size_t threads) {
     return result;
 }
 
-void SearchService::buildIndexAsync(std::size_t threads) {
+void SearchService::buildIndexAsync(std::size_t threads, std::function<void(const IndexBuildResult&)> onDone) {
     std::lock_guard lock(backgroundMutex_);
     if (backgroundBuild_.joinable()) {
         backgroundBuild_.join();
     }
-    backgroundBuild_ = std::thread([this, threads] { buildIndex(threads); });
+    backgroundBuild_ = std::thread([this, threads, onDone = std::move(onDone)] {
+        const IndexBuildResult result = buildIndex(threads);
+        if (onDone) {
+            onDone(result);
+        }
+    });
 }
 
 ollama::ExpansionResult SearchService::expandQuery(const std::string& query, bool enabled) const {
@@ -127,6 +133,9 @@ void SearchService::shutdown() {
     }
     if (requestPool_) {
         requestPool_->shutdown();
+    }
+    if (controlPool_) {
+        controlPool_->shutdown();
     }
 }
 

@@ -2,6 +2,7 @@
 
 #include <atomic>
 #include <cstddef>
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -65,7 +66,8 @@ public:
     IndexBuildResult buildIndex(std::size_t threads);
 
     /// Starts buildIndex() on a background thread (used for indexing at startup).
-    void buildIndexAsync(std::size_t threads);
+    /// `onDone` (optional) is invoked on that thread with the result.
+    void buildIndexAsync(std::size_t threads, std::function<void(const IndexBuildResult&)> onDone = {});
 
     [[nodiscard]] bool indexing() const noexcept { return indexing_.load(); }
     [[nodiscard]] bool indexReady() const { return engine_.ready(); }
@@ -84,8 +86,12 @@ public:
     [[nodiscard]] bool ollamaAvailable() const;
     [[nodiscard]] std::string ollamaModel() const;
 
-    /// Pool on which HTTP/WebSocket handlers execute blocking work.
+    /// Pool on which HTTP/WebSocket handlers execute search requests.
     threading::ThreadPool& requestPool() noexcept { return *requestPool_; }
+
+    /// Small separate pool for health checks and index-build requests, so that they
+    /// are never queued behind slow LLM calls in the request pool.
+    threading::ThreadPool& controlPool() noexcept { return *controlPool_; }
 
     [[nodiscard]] const core::Config& config() const noexcept { return config_; }
 
@@ -98,6 +104,7 @@ private:
     ollama::QueryExpander expander_;
     SearchEngine engine_;
     std::unique_ptr<threading::ThreadPool> requestPool_;
+    std::unique_ptr<threading::ThreadPool> controlPool_;
 
     std::atomic<bool> indexing_{false};
     std::atomic<std::size_t> searchesServed_{0};
