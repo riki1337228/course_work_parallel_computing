@@ -79,27 +79,31 @@ bool OllamaClient::checkNow() {
 }
 
 bool OllamaClient::isAvailable() {
-    {
+    auto fresh = [this](bool& value) {
         std::lock_guard lock(cacheMutex_);
         if (hasCache_ && std::chrono::steady_clock::now() - lastCheck_ < healthTtl_) {
-            return lastAvailable_;
+            value = lastAvailable_;
+            return true;
         }
+        return false;
+    };
+    bool value = false;
+    if (fresh(value)) {
+        return value;
     }
-    bool expected = false;
-    if (!refreshing_.compare_exchange_strong(expected, true)) {
-        // Another thread is refreshing: return the last known state (false if none).
-        std::lock_guard lock(cacheMutex_);
-        return hasCache_ && lastAvailable_;
+    // Only one thread performs the HTTP check; the others wait for it and then
+    // read the refreshed cache (double-checked), never a stale value.
+    std::lock_guard refresh(refreshMutex_);
+    if (healthTtl_.count() > 0 && fresh(value)) {
+        return value;
     }
-    bool available = false;
     try {
-        available = checkNow();
+        return checkNow();
     } catch (const std::exception& e) {
         LOG_WARN << "Ollama availability check failed: " << e.what();
         storeAvailability(false);
+        return false;
     }
-    refreshing_.store(false);
-    return available;
 }
 
 std::optional<std::string> OllamaClient::generate(const std::string& prompt, std::string* error) {
@@ -118,7 +122,11 @@ std::optional<std::string> OllamaClient::generate(const std::string& prompt, std
     const auto [result, response] = client->sendRequest(request, generateTimeoutSec_);
     if (result != drogon::ReqResult::Ok || !response) {
         const std::string reason = "Ollama request failed: " + describe(result);
-        if (result != drogon::ReqResult::Timeout) {
+        if (result == drogon::ReqResult::Timeout) {
+            // Busy model or dead host? Re-check now so the next searches know.
+            std::lock_guard refresh(refreshMutex_);
+            checkNow();
+        } else {
             storeAvailability(false);  // connection-level failure: fail fast next time
         }
         setError(result == drogon::ReqResult::Timeout

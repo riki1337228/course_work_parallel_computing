@@ -32,7 +32,7 @@ struct Config {
     // Ollama
     std::string ollamaUrl = "http://ollama:11434"; ///< OLLAMA_URL
     std::string ollamaModel = "qwen2.5:3b";        ///< OLLAMA_MODEL
-    double ollamaTimeoutSec = 60.0;                ///< OLLAMA_TIMEOUT_SEC: generate() timeout
+    double ollamaTimeoutSec = 30.0;                ///< OLLAMA_TIMEOUT_SEC: generate() timeout
     double ollamaHealthTimeoutSec = 2.0;           ///< OLLAMA_HEALTH_TIMEOUT_SEC
     double ollamaHealthTtlSec = 5.0;               ///< OLLAMA_HEALTH_TTL_SEC: availability cache TTL
     std::size_t maxExpansionTerms = 6;             ///< MAX_EXPANSION_TERMS
