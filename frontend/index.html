@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Parallel Search</title>
+  <meta name="description" content="Parallel inverted-index search engine with LLM query expansion">
+  <link rel="stylesheet" href="css/style.css">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Ccircle cx='10' cy='10' r='6' fill='none' stroke='%234f46e5' stroke-width='2.5'/%3E%3Cpath d='M15 15l6 6' stroke='%234f46e5' stroke-width='2.5' stroke-linecap='round'/%3E%3C/svg%3E">
+</head>
+<body>
+  <header class="topbar">
+    <div class="container topbar__inner">
+      <div class="brand">
+        <svg class="brand__logo" viewBox="0 0 24 24" aria-hidden="true"><circle cx="10" cy="10" r="6"/><path d="M15 15l6 6"/></svg>
+        <div>
+          <h1 class="brand__title">Parallel Search</h1>
+          <p class="brand__subtitle">C++20 inverted index · thread pool · Ollama query expansion</p>
+        </div>
+      </div>
+      <div class="status">
+        <span class="pill" id="ollamaStatus" title="Ollama availability (GET /api/health)">
+          <span class="dot"></span><span class="pill__label">Ollama: checking…</span>
+        </span>
+        <span class="pill pill--neutral" id="docsStatus" title="Indexed documents (GET /api/stats)">
+          <span class="pill__label">Documents: –</span>
+        </span>
+      </div>
+    </div>
+  </header>
+
+  <main class="container">
+    <section class="card search-card">
+      <form id="searchForm" class="search" autocomplete="off">
+        <svg class="search__icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="10" cy="10" r="6"/><path d="M15 15l6 6"/></svg>
+        <input id="queryInput" class="search__input" type="search" maxlength="1000"
+               placeholder="Search documents, e.g. artificial intelligence machine learning" required>
+        <button id="searchButton" class="button" type="submit">Search</button>
+      </form>
+      <div class="options">
+        <label class="toggle">
+          <input type="checkbox" id="expandToggle" checked>
+          <span class="toggle__track"><span class="toggle__thumb"></span></span>
+          <span>LLM query expansion</span>
+        </label>
+        <label class="select">
+          <span>Results</span>
+          <select id="limitSelect">
+            <option>5</option><option selected>10</option><option>20</option><option>50</option>
+          </select>
+        </label>
+        <div class="examples">
+          <span>Try:</span>
+          <button type="button" class="chip chip--link" data-query="car">car</button>
+          <button type="button" class="chip chip--link" data-query="artificial intelligence machine learning">artificial intelligence</button>
+          <button type="button" class="chip chip--link" data-query="climate change glacier">climate change</button>
+          <button type="button" class="chip chip--link" data-query="thread mutex deadlock">thread mutex</button>
+        </div>
+      </div>
+    </section>
+
+    <section class="card pipeline" aria-label="Search pipeline">
+      <ol class="steps">
+        <li class="step" id="stepExpansion"><span class="step__icon">1</span><div><strong>Query Expansion</strong><small>Ollama · qwen2.5:3b</small></div></li>
+        <li class="step__line"></li>
+        <li class="step" id="stepSearch"><span class="step__icon">2</span><div><strong>Keyword Search</strong><small>Inverted index · TF-IDF</small></div></li>
+        <li class="step__line"></li>
+        <li class="step" id="stepDone"><span class="step__icon">3</span><div><strong>Done</strong><small>Results ready</small></div></li>
+      </ol>
+      <div class="pipeline__status" id="statusLine" role="status" aria-live="polite">Enter a query to start.</div>
+      <div class="terms" id="termsBox" hidden>
+        <span class="terms__label">Expanded terms:</span>
+        <span id="termsList"></span>
+      </div>
+    </section>
+
+    <section class="results-header" id="resultsHeader" hidden>
+      <h2 id="resultsTitle">Results</h2>
+      <span class="meta" id="resultsMeta"></span>
+    </section>
+    <section id="results" class="results"></section>
+  </main>
+
+  <footer class="footer container">
+    Course work «Parallel computing» · REST <code>/api/*</code> · WebSocket <code>/ws/search</code>
+  </footer>
+
+  <template id="resultTemplate">
+    <article class="card result">
+      <div class="result__head">
+        <span class="result__rank"></span>
+        <span class="result__doc"></span>
+        <span class="result__score"><span class="bar"><span class="bar__fill"></span></span><span class="score__value"></span></span>
+      </div>
+      <p class="result__snippet"></p>
+    </article>
+  </template>
+
+  <script src="js/app.js"></script>
+</body>
+</html>
