@@ -1,0 +1,18 @@
+{
+  "server": "http://search-server:8080",
+  "client_platform": "Linux-6.6.87.2-microsoft-standard-WSL2-x86_64-with-glibc2.41",
+  "client_cpu_count": 12,
+  "timestamp_utc": "2026-11-22T21:35:43Z",
+  "threads": [
+    1,
+    2,
+    4,
+    8,
+    16
+  ],
+  "repeats": 3,
+  "warmup_ms": 2384.343,
+  "documents": 20000,
+  "unique_terms": 28024,
+  "total_postings": 14479164
+}
