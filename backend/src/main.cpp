@@ -1,6 +1,8 @@
 // Search backend entry point: configures Drogon (REST + WebSocket + static Web UI),
 // creates the SearchService and starts the initial parallel index build.
 
+#include <cstdint>
+#include <cstdio>
 #include <filesystem>
 #include <memory>
 
@@ -26,6 +28,13 @@ trantor::Logger::LogLevel parseLogLevel(const std::string& level) {
 int main() {
     using search::core::Config;
     const Config config = Config::fromEnvironment();
+    // stdout is a pipe inside Docker: flush every log line so `docker compose logs` is live.
+    trantor::Logger::setOutputFunction(
+        [](const char* message, std::uint64_t length) {
+            std::fwrite(message, 1, static_cast<std::size_t>(length), stdout);
+            std::fflush(stdout);
+        },
+        [] { std::fflush(stdout); });
     trantor::Logger::setLogLevel(parseLogLevel(config.logLevel));
 
     LOG_INFO << "Starting search server: dataset=" << config.datasetPath << " port=" << config.port
