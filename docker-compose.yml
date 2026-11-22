@@ -1,0 +1,173 @@
+# Parallel search engine with Ollama query expansion.
+#
+#   docker compose up            -> dataset-init, ollama, ollama-init, search-server
+#   http://localhost:8080        -> Web UI (REST API under /api, WebSocket /ws/search)
+#
+# Optional services (profile "tools"):
+#   docker compose --profile tools run --rm tests       # unit + integration tests
+#   docker compose --profile tools run --rm tsan        # tests under ThreadSanitizer
+#   docker compose --profile tools run --rm e2e         # end-to-end check of the running stack
+#   docker compose --profile tools run --rm benchmark   # benchmarks + plots -> docs/benchmarks
+
+name: course_work_parallel_computing
+
+x-ollama-image: &ollama-image ollama/ollama:0.12.6
+
+services:
+  # --------------------------------------------------------------------------
+  # One-shot: generates the ~2 GiB synthetic corpus into the `dataset` volume.
+  # Idempotent: exits immediately if a complete dataset already exists.
+  dataset-init:
+    build:
+      context: .
+      dockerfile: docker/dataset/Dockerfile
+    image: course_work_parallel_computing/dataset-init:latest
+    environment:
+      DATASET_PATH: /data
+      DATASET_DOCUMENTS: ${DATASET_DOCUMENTS:-20000}
+      DATASET_TARGET_MB: ${DATASET_TARGET_MB:-2048}
+      DATASET_SEED: ${DATASET_SEED:-42}
+    volumes:
+      - dataset:/data
+    networks: [search-net]
+    restart: "no"
+
+  # --------------------------------------------------------------------------
+  # Local LLM server (separate service). Models persist in `ollama-models`.
+  ollama:
+    image: *ollama-image
+    environment:
+      OLLAMA_KEEP_ALIVE: 30m
+    volumes:
+      - ollama-models:/root/.ollama
+    networks: [search-net]
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 10s
+    restart: unless-stopped
+
+  # --------------------------------------------------------------------------
+  # One-shot: pulls the model (first run downloads ~1.9 GB) and warms it up.
+  # The search server does NOT wait for it: until the model is ready /api/health
+  # reports "ollama": false and searches run in fallback mode (no expansion).
+  ollama-init:
+    image: *ollama-image
+    depends_on:
+      ollama:
+        condition: service_healthy
+    environment:
+      OLLAMA_HOST: http://ollama:11434
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen2.5:3b}
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        for attempt in 1 2 3 4 5; do
+          echo "[ollama-init] pulling $$OLLAMA_MODEL (attempt $$attempt)"
+          if ollama pull "$$OLLAMA_MODEL"; then
+            echo "[ollama-init] warming up $$OLLAMA_MODEL"
+            ollama run "$$OLLAMA_MODEL" --keepalive 30m "Reply with the single word: ready" || true
+            echo "[ollama-init] model $$OLLAMA_MODEL is ready"
+            exit 0
+          fi
+          sleep 10
+        done
+        echo "[ollama-init] could not pull $$OLLAMA_MODEL - search will run in fallback mode"
+        exit 1
+    networks: [search-net]
+    restart: "no"
+
+  # --------------------------------------------------------------------------
+  # C++20 backend: REST API + WebSocket + Web UI. Builds the index automatically
+  # on startup once dataset-init has completed.
+  search-server:
+    build:
+      context: .
+      target: runtime
+    image: course_work_parallel_computing/search-server:latest
+    depends_on:
+      dataset-init:
+        condition: service_completed_successfully
+      ollama:
+        condition: service_started
+    environment:
+      DATASET_PATH: /data
+      SERVER_PORT: 8080
+      AUTO_INDEX: "true"
+      INDEX_THREADS: ${INDEX_THREADS:-8}
+      REQUEST_THREADS: ${REQUEST_THREADS:-16}
+      IO_THREADS: ${IO_THREADS:-4}
+      MAX_INDEX_THREADS: ${MAX_INDEX_THREADS:-64}
+      DEFAULT_LIMIT: ${DEFAULT_LIMIT:-10}
+      MAX_LIMIT: ${MAX_LIMIT:-100}
+      EXPANDED_TERM_WEIGHT: ${EXPANDED_TERM_WEIGHT:-0.5}
+      OLLAMA_URL: http://ollama:11434
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen2.5:3b}
+      OLLAMA_TIMEOUT_SEC: ${OLLAMA_TIMEOUT_SEC:-60}
+      MAX_EXPANSION_TERMS: ${MAX_EXPANSION_TERMS:-6}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    volumes:
+      - dataset:/data:ro
+    ports:
+      - "${SERVER_PORT:-8080}:8080"
+    networks: [search-net]
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8080/api/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 15s
+    restart: unless-stopped
+
+  # ========================================================================== tools
+  tests:
+    profiles: [tools]
+    build:
+      context: .
+      target: test
+    image: course_work_parallel_computing/tests:latest
+    networks: [search-net]
+
+  tsan:
+    profiles: [tools]
+    build:
+      context: .
+      target: tsan
+    image: course_work_parallel_computing/tsan:latest
+    security_opt:
+      - seccomp=unconfined   # needed for `setarch -R` (TSan + ASLR, see Dockerfile)
+
+  e2e:
+    profiles: [tools]
+    build:
+      context: .
+      dockerfile: docker/tools/Dockerfile
+    image: course_work_parallel_computing/tools:latest
+    environment:
+      SERVER_URL: http://search-server:8080
+    command: ["python", "scripts/e2e_check.py"]
+    networks: [search-net]
+
+  benchmark:
+    profiles: [tools]
+    build:
+      context: .
+      dockerfile: docker/tools/Dockerfile
+    image: course_work_parallel_computing/tools:latest
+    environment:
+      SERVER_URL: http://search-server:8080
+      OUTPUT_DIR: /out
+    volumes:
+      - ./docs/benchmarks:/out
+    command: ["sh", "-c", "python scripts/benchmark_index.py && python scripts/benchmark_search.py && python scripts/plot_results.py"]
+    networks: [search-net]
+
+volumes:
+  dataset:
+  ollama-models:
+
+networks:
+  search-net:
+    driver: bridge
