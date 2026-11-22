@@ -19,6 +19,8 @@
 
 * { box-sizing: border-box; }
 
+[hidden] { display: none !important; }
+
 body {
   margin: 0;
   background: var(--bg);
@@ -49,7 +51,7 @@ code { font-size: 0.9em; background: var(--accent-soft); padding: 1px 5px; borde
 .pill--warn .dot { background: var(--warn); }
 
 /* ------------------------------------------------------------------ cards */
-main { padding-top: 24px; padding-bottom: 24px; }
+main.container { padding-top: 24px; padding-bottom: 24px; }
 .card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow); }
 .search-card { padding: 18px; }
 

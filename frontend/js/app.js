@@ -232,4 +232,11 @@
   refreshStatus();
   setInterval(refreshStatus, 5000);
   input.focus();
+
+  // Deep link: /?q=<query> runs the search immediately (handy for demos).
+  const initialQuery = new URLSearchParams(location.search).get("q");
+  if (initialQuery) {
+    input.value = initialQuery;
+    search(initialQuery);
+  }
 })();
