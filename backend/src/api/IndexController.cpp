@@ -50,7 +50,9 @@ void IndexController::handle(const drogon::HttpRequestPtr& request, Callback&& c
                 case Error::None:
                     LOG_INFO << "Index built: " << result.documentsIndexed << " documents in " << result.timeMs
                              << " ms (threads=" << threads << ", tasks=" << result.stats.tasks
-                             << ", read=" << result.stats.bytesRead / (1024 * 1024) << " MiB)";
+                             << ", read=" << result.stats.bytesRead / (1024 * 1024) << " MiB, phases: list="
+                             << result.stats.listTimeMs << " ms, process=" << result.stats.processTimeMs
+                             << " ms, finalize=" << result.stats.finalizeTimeMs << " ms)";
                     (*respond)(jsonResponse({
                         {"status", "ok"},
                         {"documents_indexed", result.documentsIndexed},
