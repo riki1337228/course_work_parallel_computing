@@ -71,17 +71,20 @@ DocId InvertedIndex::addDocument(std::string name, std::filesystem::path path, s
 }
 
 void InvertedIndex::setDocument(Document document) {
-    totalTokens_.fetch_add(document.tokenCount, std::memory_order_relaxed);
     std::unique_lock lock(documentsMutex_);
     if (document.id >= documents_.size()) {
         documents_.resize(static_cast<std::size_t>(document.id) + 1);
         lengths_.resize(documents_.size(), 0);
     }
-    lengths_[document.id] = document.tokenCount;
     auto& slot = documents_[document.id];
     if (!slot.has_value()) {
         ++documentCount_;
+    } else {
+        // Replacing a document: do not count its tokens twice.
+        totalTokens_.fetch_sub(slot->tokenCount, std::memory_order_relaxed);
     }
+    totalTokens_.fetch_add(document.tokenCount, std::memory_order_relaxed);
+    lengths_[document.id] = document.tokenCount;
     nameToId_[document.name] = document.id;
     slot = std::move(document);
 }
