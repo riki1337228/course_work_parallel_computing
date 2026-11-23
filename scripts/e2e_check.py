@@ -72,6 +72,7 @@ def main() -> int:
     status, stats = request("GET", "/api/stats")
     check(status == 200, "GET /api/stats -> 200", json.dumps(stats))
     check(isinstance(stats.get("documents"), int) and stats["documents"] >= 10000, "stats.documents >= 10000")
+    check(stats.get("ollama_model") == "qwen2.5:3b", "stats.ollama_model is reported")
     check(isinstance(stats.get("index_build_time_ms"), (int, float)), "stats.index_build_time_ms is number")
     check(isinstance(stats.get("threads_used"), int) and stats["threads_used"] >= 1, "stats.threads_used >= 1")
 
@@ -81,6 +82,12 @@ def main() -> int:
     status, err = request("POST", "/api/index", raw=b"{oops")
     check(status == 400 and err.get("error") == "invalid_json", "POST /api/index invalid JSON -> 400")
 
+    check(sorted(health) == ["ollama", "status"], "health has exactly the contract fields", str(sorted(health)))
+    status, err = request("POST", "/api/search", {"query": "car"})
+    check(status == 400 and err.get("error") == "invalid_mode", "POST /api/search without mode -> 400")
+    status, err = request("GET", "/api/search")
+    check(status == 405 and isinstance(err, dict) and err.get("error") == "method_not_allowed",
+          "wrong HTTP method -> 405 JSON")
     status, err = request("POST", "/api/search", {"query": "", "mode": "keyword"})
     check(status == 400 and err.get("error") == "invalid_query", "POST /api/search empty query -> 400")
     status, err = request("POST", "/api/search", {"query": "car", "mode": "semantic"})
