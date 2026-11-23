@@ -22,7 +22,7 @@ parameters, generation is skipped.
 Environment variables / CLI options:
     DATASET_PATH        output directory           (default /data)
     DATASET_DOCUMENTS   number of documents        (default 20000, minimum 1)
-    DATASET_TARGET_MB   target total size in MiB   (default 2048)
+    DATASET_TARGET_MB   target total size in MiB   (default 2100, i.e. > 2 GiB)
     DATASET_SEED        random seed                (default 42)
     DATASET_WORKERS     parallel processes         (default: CPU count)
 """
@@ -146,7 +146,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--output", default=os.environ.get("DATASET_PATH", "/data"))
     parser.add_argument("--documents", type=int, default=int(os.environ.get("DATASET_DOCUMENTS", "20000")))
-    parser.add_argument("--target-mb", type=float, default=float(os.environ.get("DATASET_TARGET_MB", "2048")))
+    parser.add_argument("--target-mb", type=float, default=float(os.environ.get("DATASET_TARGET_MB", "2100")))
     parser.add_argument("--seed", type=int, default=int(os.environ.get("DATASET_SEED", "42")))
     parser.add_argument("--workers", type=int, default=int(os.environ.get("DATASET_WORKERS", os.cpu_count() or 4)))
     args = parser.parse_args()

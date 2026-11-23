@@ -15,7 +15,7 @@ x-ollama-image: &ollama-image ollama/ollama:0.12.6
 
 services:
   # --------------------------------------------------------------------------
-  # One-shot: generates the ~2 GiB synthetic corpus into the `dataset` volume.
+  # One-shot: generates the ~2.05 GiB synthetic corpus into the `dataset` volume.
   # Idempotent: exits immediately if a complete dataset already exists.
   dataset-init:
     build:
@@ -25,7 +25,7 @@ services:
     environment:
       DATASET_PATH: /data
       DATASET_DOCUMENTS: ${DATASET_DOCUMENTS:-20000}
-      DATASET_TARGET_MB: ${DATASET_TARGET_MB:-2048}
+      DATASET_TARGET_MB: ${DATASET_TARGET_MB:-2100}
       DATASET_SEED: ${DATASET_SEED:-42}
     volumes:
       - dataset:/data
@@ -98,6 +98,9 @@ services:
       AUTO_INDEX: "true"
       INDEX_THREADS: ${INDEX_THREADS:-8}
       REQUEST_THREADS: ${REQUEST_THREADS:-16}
+      MAX_PENDING_REQUESTS: ${MAX_PENDING_REQUESTS:-1024}
+      LLM_THREADS: ${LLM_THREADS:-4}
+      LLM_MAX_QUEUE: ${LLM_MAX_QUEUE:-32}
       IO_THREADS: ${IO_THREADS:-4}
       MAX_INDEX_THREADS: ${MAX_INDEX_THREADS:-64}
       DEFAULT_LIMIT: ${DEFAULT_LIMIT:-10}
