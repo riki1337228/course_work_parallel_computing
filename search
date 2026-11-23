@@ -1,0 +1,5 @@
+#!/bin/sh
+# CLI client wrapper for the host (Linux/macOS/Git Bash):
+#   ./search "artificial intelligence" --limit 10
+# The C++ client is built inside the search-server image, so no local compiler is needed.
+exec docker compose exec -T search-server search "$@"
