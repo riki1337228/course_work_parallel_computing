@@ -13,11 +13,10 @@ void HealthController::handle(const drogon::HttpRequestPtr& /*request*/, Callbac
         // OLLAMA_HEALTH_TIMEOUT_SEC), so it must not run on the event loop.
         service->controlPool().post([service, respond] {
             const bool ollama = service->ollamaAvailable();
+            // Exactly the contract fields; index state and model are in GET /api/stats.
             (*respond)(jsonResponse({
                 {"status", "ok"},
                 {"ollama", ollama},
-                {"index_ready", service->indexReady()},
-                {"model", service->ollamaModel()},
             }));
         });
     } catch (const std::exception& e) {

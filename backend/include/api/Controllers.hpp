@@ -25,7 +25,7 @@ protected:
     std::shared_ptr<engine::SearchService> service_;
 };
 
-/// GET /api/health -> {"status": "ok", "ollama": bool, "index_ready": bool, "model": string}
+/// GET /api/health -> {"status": "ok", "ollama": bool}
 class HealthController : public ControllerBase {
 public:
     using ControllerBase::ControllerBase;
@@ -66,8 +66,10 @@ public:
     void handle(const drogon::HttpRequestPtr& request, Callback&& callback) const;
 
     /// Validates a JSON request object. On failure fills `error` and returns nullopt.
+    /// `requireMode`: REST requires "mode":"keyword" (API contract); the WebSocket
+    /// contract only has "query", so there "mode" is optional.
     static std::optional<SearchRequest> parseRequest(const nlohmann::json& body, const core::Config& config,
-                                                     ValidationError& error);
+                                                     ValidationError& error, bool requireMode);
 };
 
 /// Registers all REST routes, the JSON 404 handler and the WebSocket service.

@@ -34,6 +34,17 @@ void registerRoutes(const std::shared_ptr<engine::SearchService>& service) {
     // Unknown paths (outside the static Web UI) get a JSON 404.
     app.setCustom404Page(errorResponse(drogon::k404NotFound, "not_found", "resource not found"), false);
 
+    // Drogon answers a wrong HTTP method with an empty 405; make it a JSON error too.
+    app.registerPreSendingAdvice([](const drogon::HttpRequestPtr& req, const drogon::HttpResponsePtr& resp) {
+        if (resp->statusCode() == drogon::k405MethodNotAllowed && resp->body().empty()) {
+            resp->setContentTypeCode(drogon::CT_APPLICATION_JSON);
+            resp->setBody(errorBody("method_not_allowed",
+                                    std::string("method ") + req->methodString() + " is not allowed for " +
+                                        req->path())
+                              .dump());
+        }
+    });
+
     SearchWebSocket::setService(service);
 }
 

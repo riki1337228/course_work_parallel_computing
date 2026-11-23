@@ -15,6 +15,7 @@ void StatsController::handle(const drogon::HttpRequestPtr& /*request*/, Callback
         {"index_ready", stats.indexReady},
         {"indexing_in_progress", stats.indexingInProgress},
         {"searches_served", stats.searchesServed},
+        {"ollama_model", service_->ollamaModel()},
     }));
 }
 
