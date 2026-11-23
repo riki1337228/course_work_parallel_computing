@@ -21,7 +21,7 @@ std::string trim(const std::string& text) {
 }  // namespace
 
 std::optional<SearchRequest> SearchController::parseRequest(const json& body, const core::Config& config,
-                                                            ValidationError& error) {
+                                                            ValidationError& error, bool requireMode) {
     if (!body.is_object()) {
         error = {"invalid_json", "request body must be a JSON object"};
         return std::nullopt;
@@ -49,6 +49,9 @@ std::optional<SearchRequest> SearchController::parseRequest(const json& body, co
             error = {"invalid_mode", "mode must be \"keyword\""};
             return std::nullopt;
         }
+    } else if (requireMode) {
+        error = {"invalid_mode", "field 'mode' is required and must be \"keyword\""};
+        return std::nullopt;
     }
 
     if (const auto limit = body.find("limit"); limit != body.end()) {
@@ -76,13 +79,14 @@ std::optional<SearchRequest> SearchController::parseRequest(const json& body, co
 }
 
 void SearchController::handle(const drogon::HttpRequestPtr& request, Callback&& callback) const {
+    const auto arrival = engine::SearchService::Clock::now();
     const json body = json::parse(request->body(), nullptr, false);
     if (body.is_discarded()) {
         callback(errorResponse(drogon::k400BadRequest, "invalid_json", "request body is not valid JSON"));
         return;
     }
     ValidationError error;
-    const auto parsed = parseRequest(body, service_->config(), error);
+    const auto parsed = parseRequest(body, service_->config(), error, /*requireMode=*/true);
     if (!parsed) {
         LOG_DEBUG << "POST /api/search rejected: " << error.message;
         callback(errorResponse(drogon::k400BadRequest, error.code, error.message));
@@ -95,14 +99,24 @@ void SearchController::handle(const drogon::HttpRequestPtr& request, Callback&& 
         return;
     }
 
+    const auto route = service_->route(parsed->expand);
+    if (service_->saturated(route)) {
+        LOG_WARN << "POST /api/search rejected: request queue is full";
+        callback(errorResponse(drogon::k503ServiceUnavailable, "server_busy",
+                               "too many queued requests, try again later"));
+        return;
+    }
+
     auto service = service_;
     auto respond = std::make_shared<Callback>(std::move(callback));
     try {
-        // Expansion (LLM call) and search are blocking -> executed on the request pool,
-        // the Drogon event loop is released immediately.
-        service->requestPool().post([service, respond, req = *parsed] {
+        // Expansion (LLM call) and search are blocking -> executed on a worker pool, the
+        // Drogon event loop is released immediately. Searches with expansion go to the
+        // separate llmPool, so they can never delay searches without expansion.
+        const bool overloaded = route == engine::SearchService::Route::Overloaded;
+        service->poolFor(route).post([service, respond, req = *parsed, arrival, overloaded] {
             try {
-                const auto result = service->runPipeline(req.query, req.limit, req.expand);
+                const auto result = service->runPipeline(req.query, req.limit, req.expand, arrival, overloaded);
                 if (result.expansion.status == ollama::ExpansionStatus::Fallback) {
                     LOG_WARN << "Query expansion fallback for \"" << req.query
                              << "\": " << result.expansion.fallbackReason;

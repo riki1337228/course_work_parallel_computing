@@ -9,6 +9,7 @@ SearchService::SearchService(core::Config config, std::shared_ptr<ollama::LlmCli
       llm_(std::move(llm)),
       expander_(llm_, config_.maxExpansionTerms),
       requestPool_(std::make_unique<threading::ThreadPool>(config_.requestThreads)),
+      llmPool_(std::make_unique<threading::ThreadPool>(config_.llmThreads)),
       controlPool_(std::make_unique<threading::ThreadPool>(2)) {}
 
 SearchService::~SearchService() {
@@ -67,14 +68,45 @@ void SearchService::buildIndexAsync(std::size_t threads, std::function<void(cons
     });
 }
 
-ollama::ExpansionResult SearchService::expandQuery(const std::string& query, bool enabled) const {
-    if (!enabled) {
-        ollama::ExpansionResult disabled;
-        disabled.original = query;
-        disabled.status = ollama::ExpansionStatus::Disabled;
-        return disabled;
+SearchService::Route SearchService::route(bool expand) const {
+    if (!expand || !llm_ || config_.maxExpansionTerms == 0) {
+        return Route::Plain;
     }
-    return expander_.expand(query);
+    // Waiting + running LLM searches beyond the configured queue length are not
+    // queued at all: they are answered right away with a fallback.
+    if (llmPool_->pendingTasks() >= config_.llmMaxQueue) {
+        return Route::Overloaded;
+    }
+    return Route::Llm;
+}
+
+threading::ThreadPool& SearchService::poolFor(Route route) noexcept {
+    return route == Route::Llm ? *llmPool_ : *requestPool_;
+}
+
+bool SearchService::saturated(Route route) const {
+    const auto& pool = route == Route::Llm ? *llmPool_ : *requestPool_;
+    return pool.pendingTasks() >= config_.maxPendingRequests;
+}
+
+SearchService::Clock::time_point SearchService::expansionDeadline(Clock::time_point arrival) const {
+    return arrival + std::chrono::duration_cast<Clock::duration>(std::chrono::duration<double>(config_.ollamaTimeoutSec));
+}
+
+ollama::ExpansionResult SearchService::expandQuery(const std::string& query, bool enabled,
+                                                   Clock::time_point deadline, bool overloaded) const {
+    ollama::ExpansionResult result;
+    result.original = query;
+    if (!enabled) {
+        result.status = ollama::ExpansionStatus::Disabled;
+        return result;
+    }
+    if (overloaded) {
+        result.status = ollama::ExpansionStatus::Fallback;
+        result.fallbackReason = "LLM is overloaded: too many queries are waiting for Ollama";
+        return result;
+    }
+    return expander_.expand(query, deadline);
 }
 
 SearchResponse SearchService::keywordSearch(const std::string& query, const std::vector<std::string>& expandedTerms,
@@ -85,13 +117,14 @@ SearchResponse SearchService::keywordSearch(const std::string& query, const std:
     return response;
 }
 
-PipelineResult SearchService::runPipeline(const std::string& query, std::size_t limit, bool expand) {
-    const auto start = std::chrono::steady_clock::now();
+PipelineResult SearchService::runPipeline(const std::string& query, std::size_t limit, bool expand,
+                                          Clock::time_point arrival, bool overloaded) {
+    const auto start = arrival;
     if (!engine_.ready()) {
         throw IndexNotReadyError();  // fail fast before spending time on the LLM
     }
     PipelineResult result;
-    result.expansion = expandQuery(query, expand);
+    result.expansion = expandQuery(query, expand, expansionDeadline(arrival), overloaded);
     result.search = keywordSearch(query, result.expansion.expandedTerms, limit);
     result.totalTimeMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
     return result;
@@ -133,6 +166,9 @@ void SearchService::shutdown() {
     }
     if (requestPool_) {
         requestPool_->shutdown();
+    }
+    if (llmPool_) {
+        llmPool_->shutdown();
     }
     if (controlPool_) {
         controlPool_->shutdown();

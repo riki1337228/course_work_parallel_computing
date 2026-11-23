@@ -1,6 +1,7 @@
 #pragma once
 
 #include <atomic>
+#include <chrono>
 #include <cstddef>
 #include <functional>
 #include <memory>
@@ -50,10 +51,26 @@ struct PipelineResult {
 };
 
 /// Application service that owns the search engine, the query expander and the
-/// worker pool used to execute requests off the HTTP event loop.
+/// worker pools used to execute requests off the HTTP event loop.
 /// Framework-independent: the Drogon layer only adapts HTTP/WebSocket to it.
+///
+/// Isolation of the slow LLM (bulkhead pattern):
+///  - searches WITHOUT expansion run on `requestPool` and never wait for Ollama;
+///  - searches WITH expansion run on a separate, small `llmPool` (LLM_THREADS);
+///  - if more than LLM_MAX_QUEUE expansion searches are already waiting, a new one
+///    is routed to `requestPool` with an immediate fallback ("LLM is overloaded");
+///  - the expansion budget (OLLAMA_TIMEOUT_SEC) is counted from the request's
+///    arrival, so time spent in the queue is included.
 class SearchService {
 public:
+    using Clock = std::chrono::steady_clock;
+
+    /// Where a search request is executed.
+    enum class Route {
+        Plain,       ///< no expansion requested -> requestPool
+        Llm,         ///< expansion -> llmPool
+        Overloaded,  ///< expansion requested but llmPool queue is full -> requestPool + fallback
+    };
     SearchService(core::Config config, std::shared_ptr<ollama::LlmClient> llm);
     ~SearchService();
 
@@ -72,22 +89,44 @@ public:
     [[nodiscard]] bool indexing() const noexcept { return indexing_.load(); }
     [[nodiscard]] bool indexReady() const { return engine_.ready(); }
 
-    /// Query expansion step (never throws; returns Disabled when `enabled` is false).
-    ollama::ExpansionResult expandQuery(const std::string& query, bool enabled) const;
+    /// Chooses the execution route for a request (see class comment).
+    [[nodiscard]] Route route(bool expand) const;
+
+    /// Pool that executes requests of the given route.
+    threading::ThreadPool& poolFor(Route route) noexcept;
+
+    /// True if the pool for `route` already holds MAX_PENDING_REQUESTS queued tasks
+    /// (the request should be rejected with 503 server_busy).
+    [[nodiscard]] bool saturated(Route route) const;
+
+    /// Latest moment at which an expansion started at `arrival` may still use the LLM.
+    [[nodiscard]] Clock::time_point expansionDeadline(Clock::time_point arrival) const;
+
+    /// Query expansion step (never throws). Disabled when `enabled` is false;
+    /// immediate Fallback when `overloaded` is true.
+    ollama::ExpansionResult expandQuery(const std::string& query, bool enabled,
+                                        Clock::time_point deadline = Clock::time_point::max(),
+                                        bool overloaded = false) const;
 
     /// Keyword search step. Throws IndexNotReadyError.
     SearchResponse keywordSearch(const std::string& query, const std::vector<std::string>& expandedTerms,
                                  std::size_t limit);
 
-    /// Expansion followed by keyword search. Throws IndexNotReadyError.
-    PipelineResult runPipeline(const std::string& query, std::size_t limit, bool expand);
+    /// Expansion followed by keyword search. `arrival` is when the request was
+    /// received (total time and the LLM budget are measured from it).
+    /// Throws IndexNotReadyError.
+    PipelineResult runPipeline(const std::string& query, std::size_t limit, bool expand,
+                               Clock::time_point arrival = Clock::now(), bool overloaded = false);
 
     [[nodiscard]] ServiceStats stats() const;
     [[nodiscard]] bool ollamaAvailable() const;
     [[nodiscard]] std::string ollamaModel() const;
 
-    /// Pool on which HTTP/WebSocket handlers execute search requests.
+    /// Pool for searches without LLM expansion.
     threading::ThreadPool& requestPool() noexcept { return *requestPool_; }
+
+    /// Separate small pool for searches that call the LLM.
+    threading::ThreadPool& llmPool() noexcept { return *llmPool_; }
 
     /// Small separate pool for health checks and index-build requests, so that they
     /// are never queued behind slow LLM calls in the request pool.
@@ -104,6 +143,7 @@ private:
     ollama::QueryExpander expander_;
     SearchEngine engine_;
     std::unique_ptr<threading::ThreadPool> requestPool_;
+    std::unique_ptr<threading::ThreadPool> llmPool_;
     std::unique_ptr<threading::ThreadPool> controlPool_;
 
     std::atomic<bool> indexing_{false};

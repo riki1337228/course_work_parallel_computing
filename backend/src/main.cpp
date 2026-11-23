@@ -39,7 +39,11 @@ int main() {
 
     LOG_INFO << "Starting search server: dataset=" << config.datasetPath << " port=" << config.port
              << " io_threads=" << config.ioThreads << " request_threads=" << config.requestThreads
+             << " llm_threads=" << config.llmThreads << " llm_max_queue=" << config.llmMaxQueue
              << " ollama=" << config.ollamaUrl << " model=" << config.ollamaModel;
+    for (const auto& warning : config.warnings) {
+        LOG_WARN << "Configuration: " << warning;
+    }
 
     auto ollama = std::make_shared<search::ollama::OllamaClient>(config.ollamaUrl, config.ollamaModel,
                                                                  config.ollamaTimeoutSec,

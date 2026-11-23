@@ -79,7 +79,8 @@ void SearchWebSocket::handleNewMessage(const drogon::WebSocketConnectionPtr& con
         return;
     }
     ValidationError error;
-    const auto request = SearchController::parseRequest(body, svc->config(), error);
+    const auto arrival = engine::SearchService::Clock::now();
+    const auto request = SearchController::parseRequest(body, svc->config(), error, /*requireMode=*/false);
     if (!request) {
         sendJson(connection, errorMessage(error.code, error.message));
         return;
@@ -87,6 +88,12 @@ void SearchWebSocket::handleNewMessage(const drogon::WebSocketConnectionPtr& con
     if (!svc->indexReady()) {
         sendJson(connection, errorMessage("index_not_ready", svc->indexing() ? "index is being built, try again later"
                                                                              : "index is not built"));
+        return;
+    }
+
+    const auto route = svc->route(request->expand);
+    if (svc->saturated(route)) {
+        sendJson(connection, errorMessage("server_busy", "too many queued requests, try again later"));
         return;
     }
 
@@ -102,14 +109,16 @@ void SearchWebSocket::handleNewMessage(const drogon::WebSocketConnectionPtr& con
     }
 
     try {
-        svc->requestPool().post([svc, connection, state, req = *request] {
+        const bool overloaded = route == engine::SearchService::Route::Overloaded;
+        svc->poolFor(route).post([svc, connection, state, req = *request, arrival, overloaded] {
             struct BusyGuard {
                 std::atomic<bool>& flag;
                 ~BusyGuard() { flag.store(false); }
             } guard{state->busy};
             try {
                 // Stage 1: query expansion through Ollama (or fallback).
-                const auto expansion = svc->expandQuery(req.query, req.expand);
+                const auto expansion =
+                    svc->expandQuery(req.query, req.expand, svc->expansionDeadline(arrival), overloaded);
                 if (expansion.status == ollama::ExpansionStatus::Fallback) {
                     LOG_WARN << "Query expansion fallback for \"" << req.query << "\": " << expansion.fallbackReason;
                 }
