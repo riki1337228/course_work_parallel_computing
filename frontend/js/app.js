@@ -31,17 +31,24 @@
   async function refreshStatus() {
     const ollamaPill = $("ollamaStatus");
     const docsPill = $("docsStatus");
+    let stats = null;
+    try {
+      stats = await fetch("/api/stats", { cache: "no-store" }).then((r) => r.json());
+    } catch {
+      /* handled below */
+    }
     try {
       const health = await fetch("/api/health", { cache: "no-store" }).then((r) => r.json());
+      const model = stats && stats.ollama_model ? ` (${stats.ollama_model})` : "";
       ollamaPill.className = "pill " + (health.ollama ? "pill--ok" : "pill--warn");
       ollamaPill.querySelector(".pill__label").textContent =
-        health.ollama ? `Ollama: online (${health.model})` : "Ollama: unavailable";
+        health.ollama ? `Ollama: online${model}` : "Ollama: unavailable";
     } catch {
       ollamaPill.className = "pill pill--warn";
       ollamaPill.querySelector(".pill__label").textContent = "Server: offline";
     }
     try {
-      const stats = await fetch("/api/stats", { cache: "no-store" }).then((r) => r.json());
+      if (!stats) throw new Error("no stats");
       const label = docsPill.querySelector(".pill__label");
       if (stats.indexing_in_progress && !stats.index_ready) {
         label.textContent = "Index: building…";
@@ -167,7 +174,8 @@
         if (pending) pending.terms = pending.terms.concat(exp.expanded_terms.flatMap(tokens));
         if (exp.status === "fallback") {
           setStep("expansion", "fallback");
-          setStatus("Ollama unavailable — fallback mode. Searching index…", "warn");
+          const reason = exp.fallback_reason ? ` (${exp.fallback_reason})` : "";
+          setStatus(`Ollama unavailable — fallback mode${reason}. Searching index…`, "warn");
         } else {
           setStep("expansion", "done");
           setStatus(exp.status === "disabled" ? "Query expansion disabled. Searching index…" : "Searching index…", "busy");
