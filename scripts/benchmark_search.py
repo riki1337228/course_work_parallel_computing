@@ -192,11 +192,20 @@ def main() -> int:
                       flush=True)
             write("search_throughput_llm.csv", llm_rows, BASE + ["fallbacks", "p50_ms", "p95_ms", "max_ms"])
 
-    save_json("search_meta.json", {**environment_info(), "clients": CLIENTS,
+    llm_meta = {"llm_clients": LLM_CLIENTS if llm_rows else [],
+                "llm_requests_per_client": LLM_REQUESTS_PER_CLIENT if llm_rows else 0}
+    previous = OUTPUT_DIR / "search_meta.json"
+    if not llm_rows and previous.is_file():
+        # LLM part not re-run: keep the description of the existing search_throughput_llm.csv.
+        old = json.loads(previous.read_text(encoding="utf-8"))
+        llm_meta = {"llm_clients": old.get("llm_clients", []),
+                    "llm_requests_per_client": old.get("llm_requests_per_client", 0),
+                    "llm_measured_at": old.get("llm_measured_at", old.get("timestamp_utc"))}
+    elif llm_rows:
+        llm_meta["llm_measured_at"] = environment_info()["timestamp_utc"]
+    save_json("search_meta.json", {**environment_info(), **llm_meta, "clients": CLIENTS,
                                    "requests_per_client": REQUESTS_PER_CLIENT, "repeats": REPEATS, "limit": LIMIT,
-                                   "queries": len(QUERIES), "documents": stats["documents"],
-                                   "llm_clients": LLM_CLIENTS if llm_rows else [],
-                                   "llm_requests_per_client": LLM_REQUESTS_PER_CLIENT if llm_rows else 0})
+                                   "queries": len(QUERIES), "documents": stats["documents"]})
     return 0
 
 
