@@ -5,6 +5,8 @@ classDiagram
         class Config {
             +string datasetPath
             +size_t requestThreads
+            +size_t llmThreads
+            +size_t llmMaxQueue
             +size_t indexThreads
             +string ollamaUrl
             +string ollamaModel
@@ -94,13 +96,17 @@ classDiagram
             -SearchEngine engine_
             -QueryExpander expander_
             -ThreadPool requestPool_
+            -ThreadPool llmPool_
             -ThreadPool controlPool_
             -atomic~bool~ indexing_
+            +route(expand) Route
+            +poolFor(Route) ThreadPool
+            +saturated(Route) bool
             +buildIndex(threads) IndexBuildResult
             +buildIndexAsync(threads, onDone)
             +expandQuery(query, enabled) ExpansionResult
             +keywordSearch(query, terms, limit) SearchResponse
-            +runPipeline(query, limit, expand) PipelineResult
+            +runPipeline(query, limit, expand, arrival) PipelineResult
             +stats() ServiceStats
             +ollamaAvailable() bool
         }
@@ -110,7 +116,7 @@ classDiagram
         class LlmClient {
             <<interface>>
             +isAvailable() bool
-            +generate(prompt, error*) optional~string~
+            +generate(prompt, error*, timeoutSec) optional~string~
             +model() string
         }
         class OllamaClient {
@@ -118,8 +124,9 @@ classDiagram
             -mutex refreshMutex_
             -bool lastAvailable_
             +isAvailable() bool
-            +generate(prompt, error*) optional~string~
+            +generate(prompt, error*, budget) optional~string~
             +checkNow() bool
+            -refreshAsync()
         }
         class OllamaProtocol {
             +buildGenerateRequest(model, prompt)$ string
@@ -129,7 +136,7 @@ classDiagram
         class QueryExpander {
             -shared_ptr~LlmClient~ client_
             -size_t maxTerms_
-            +expand(query) ExpansionResult
+            +expand(query, deadline) ExpansionResult
             +buildPrompt(query, maxTerms)$ string
             +parseResponse(text, query, maxTerms)$ optional~vector~
         }
@@ -164,7 +171,7 @@ classDiagram
     SearchEngine o-- InvertedIndex : immutable snapshot
     SearchService *-- SearchEngine
     SearchService *-- QueryExpander
-    SearchService *-- "2" ThreadPool : request + control pools
+    SearchService *-- "3" ThreadPool : request, llm, control pools
     SearchService ..> IndexBuilder
     SearchService --> Config
     QueryExpander --> LlmClient

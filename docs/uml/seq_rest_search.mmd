@@ -1,45 +1,57 @@
-%% Sequence: POST /api/search (Web/CLI client) with Ollama query expansion and fallback
+%% Sequence: POST /api/search with Ollama query expansion, LLM bulkhead and fallback
 sequenceDiagram
     autonumber
     actor C as Client (CLI `search` / curl)
     participant L as Drogon event loop
     participant SC as SearchController
-    participant RP as requestPool (ThreadPool)
     participant SS as SearchService
+    participant LP as llmPool (LLM_THREADS = 4)
+    participant RP as requestPool (16)
     participant QE as QueryExpander
     participant OC as OllamaClient
     participant O as Ollama (qwen2.5:3b)
     participant SE as SearchEngine
-    participant II as InvertedIndex
 
     C->>L: POST /api/search {"query":"car","mode":"keyword","limit":10}
-    L->>SC: handle(request)
-    SC->>SC: parseRequest(): query, mode, limit, expand
+    L->>SC: handle(request), arrival = now
+    SC->>SC: parseRequest(): query, mode (required), limit, expand
     alt validation error
         SC-->>C: 400 {"error":"invalid_query" | "invalid_mode" | ...}
     else index not built
         SC-->>C: 503 {"error":"index_not_ready"}
     end
-    SC->>RP: post(pipeline task)
-    Note over L: event loop is free for other clients
-    RP->>SS: runPipeline(query, limit, expand)
-    SS->>QE: expand(query)
-    QE->>OC: isAvailable() (cached 5 s)
-    alt Ollama available
-        QE->>OC: generate(JSON prompt)
+    SC->>SS: route(expand)
+    alt expand = false
+        SS-->>SC: Plain -> requestPool
+    else expand = true and llmPool queue < LLM_MAX_QUEUE
+        SS-->>SC: Llm -> llmPool
+    else llmPool queue is full
+        SS-->>SC: Overloaded -> requestPool + immediate fallback
+    end
+    alt chosen pool holds MAX_PENDING_REQUESTS tasks
+        SC-->>C: 503 {"error":"server_busy"}
+    end
+    SC->>LP: post(pipeline task)  (Plain/Overloaded go to RP instead)
+    Note over L,RP: event loop is free, and searches without LLM never wait behind LLM searches
+    LP->>SS: runPipeline(query, limit, expand, arrival)
+    SS->>QE: expand(query, deadline = arrival + 30 s)
+    QE->>OC: isAvailable() (cached, refreshed in background every 5 s)
+    alt available and time budget left
+        QE->>OC: generate(JSON prompt, remaining budget)
         OC->>O: POST /api/generate {"format":"json","stream":false}
+        par parallel availability probe
+            OC->>O: GET /api/tags
+        end
         O-->>OC: {"response": "{expanded_terms: [...]}"}
         OC-->>QE: response text
-        QE->>QE: parseResponse(): JSON, sanitize, dedupe, ≤ 6 terms
+        QE->>QE: parseResponse(): JSON, sanitize, dedupe, max 6 terms
         QE-->>SS: status = ok, expanded_terms
-    else unavailable / timeout (30 s) / invalid JSON
+    else unavailable / budget spent / timeout / probe says down / invalid JSON
         QE-->>SS: status = fallback, fallback_reason
         Note over SS: logged as WARN, search continues
     end
     SS->>SE: search(buildQueryTerms(query, expanded, w = 0.5), limit)
-    SE->>II: visitDocumentLengths() + visitPostings(term) [shared locks]
-    SE->>SE: TF-IDF accumulation, partial_sort top-K
-    SE->>II: snippet(docId, terms) (reads file)
+    SE->>SE: shared locks, TF-IDF, partial_sort top-K, snippets
     SE-->>SS: SearchResponse
-    SS-->>RP: PipelineResult
-    RP-->>C: 200 {"results":[...],"time_ms":..,"expansion_status":"ok",...}
+    SS-->>LP: PipelineResult (time_ms measured from arrival)
+    LP-->>C: 200 {"results":[...],"time_ms":..,"expansion_status":"ok",...}

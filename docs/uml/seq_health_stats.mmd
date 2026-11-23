@@ -19,16 +19,16 @@ sequenceDiagram
     S->>S: register routes, buildIndexAsync(INDEX_THREADS)
     Note over S: /api/search returns 503 index_not_ready<br/>until the first build is published
 
-    loop every 5 s
+    loop every OLLAMA_HEALTH_TTL_SEC (5 s), on the OllamaClient event loop
+        OC->>O: GET /api/tags (non-blocking, timeout 2 s)
+        O-->>OC: models list -> is qwen2.5:3b present? -> cached
+    end
+    loop every 5 s (Web UI)
+        UI->>ST: GET /api/stats
+        ST-->>UI: 200 {"documents":20000,"index_build_time_ms":...,"threads_used":8,"ollama_model":"qwen2.5:3b",...}
         UI->>HC: GET /api/health
         HC->>CP: post(check)
-        CP->>OC: isAvailable()
-        alt cache older than OLLAMA_HEALTH_TTL_SEC
-            OC->>O: GET /api/tags (timeout 2 s)
-            O-->>OC: models list → is qwen2.5:3b present?
-        end
+        CP->>OC: isAvailable() (returns the cached value immediately)
         OC-->>CP: true / false
-        CP-->>UI: 200 {"status":"ok","ollama":true,"index_ready":true,"model":"qwen2.5:3b"}
-        UI->>ST: GET /api/stats
-        ST-->>UI: 200 {"documents":20000,"index_build_time_ms":...,"threads_used":8,...}
+        CP-->>UI: 200 {"status":"ok","ollama":true}
     end

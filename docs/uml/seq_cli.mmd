@@ -1,0 +1,30 @@
+%% Sequence: CLI client `search` (use case "Search documents by keywords" from the command line)
+sequenceDiagram
+    autonumber
+    actor U as User (terminal)
+    participant W as ./search or search.cmd (host wrapper)
+    participant D as docker compose exec
+    participant CLI as search (C++ CLI, in search-server image)
+    participant HC as drogon::HttpClient (own event loop thread)
+    participant S as search-server REST API
+
+    U->>W: ./search "artificial intelligence" --limit 10
+    W->>D: docker compose exec -T search-server search ...
+    D->>CLI: start process with the arguments
+    CLI->>CLI: parseArgs(): query, --limit, --server, --no-expand, --timeout, --json
+    alt invalid arguments
+        CLI-->>U: usage, exit code 2
+    end
+    CLI->>HC: POST /api/search {"query","mode":"keyword","limit","expand"} (timeout 120 s)
+    HC->>S: HTTP request
+    alt server unreachable / timeout
+        HC-->>CLI: ReqResult != Ok
+        CLI-->>U: "error: cannot reach server ...", exit code 3
+    else HTTP 4xx / 5xx
+        S-->>HC: {"error","message"}
+        CLI-->>U: "error: HTTP 400 invalid_query: ...", exit code 4
+    else HTTP 200
+        S-->>HC: {"results":[...],"time_ms",...,"expansion_status"}
+        HC-->>CLI: JSON body
+        CLI-->>U: expanded terms (or fallback notice), matches, search time, ranked results with snippets, exit code 0
+    end

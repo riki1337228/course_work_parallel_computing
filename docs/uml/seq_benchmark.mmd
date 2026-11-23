@@ -1,0 +1,44 @@
+%% Sequence: use case "Run benchmarks & build charts"
+sequenceDiagram
+    autonumber
+    actor R as Researcher
+    participant DC as docker compose (profile tools)
+    participant BI as benchmark_index.py
+    participant BS as benchmark_search.py
+    participant P as client processes (1..50)
+    participant S as search-server
+    participant PL as plot_results.py
+    participant FS as docs/benchmarks (bind mount)
+
+    R->>DC: docker compose --profile tools run --rm benchmark
+    DC->>BI: start
+    BI->>S: GET /api/stats (wait until index_ready, no build running)
+    BI->>S: POST /api/index {"threads": 16} (warm-up)
+    loop threads in 1, 2, 4, 8, 16
+        loop repeat 1..BENCH_REPEATS
+            BI->>S: POST /api/index {"threads": n}
+            S-->>BI: {"documents_indexed", "time_ms"} (measured by the server)
+        end
+    end
+    BI->>FS: index_build.csv, index_build_runs.csv, index_build_summary.csv, meta.json
+    BI->>S: POST /api/index {"threads": 8} (restore default)
+    DC->>BS: start
+    loop clients in 1, 5, 10, 20, 50
+        loop repeat 1..BENCH_REPEATS
+            BS->>P: spawn N processes, start together (barrier)
+            par every client process
+                P->>S: 200 x POST /api/search (expand=false, persistent connection)
+                S-->>P: 200 results (latency measured by the client)
+            end
+            P-->>BS: latencies, errors
+        end
+    end
+    opt BENCH_LLM=1
+        BS->>P: same with expand=true (Ollama), counts fallbacks
+    end
+    BS->>FS: search_throughput.csv, _detail.csv, _runs.csv, _llm.csv, meta.json
+    DC->>PL: start
+    PL->>FS: read CSV, write index_build_time.png, index_speedup.png, throughput.png, latency.png, throughput_llm.png
+    opt cold page cache (host)
+        R->>S: benchmark_cold_cache.py: drop_caches + POST /api/index for every n
+    end
