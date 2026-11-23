@@ -1,5 +1,6 @@
 #pragma once
 
+#include <chrono>
 #include <cstddef>
 #include <memory>
 #include <optional>
@@ -33,10 +34,18 @@ class QueryExpander {
 public:
     QueryExpander(std::shared_ptr<LlmClient> client, std::size_t maxTerms);
 
+    using Clock = std::chrono::steady_clock;
+
     /// Never throws: every failure results in status == Fallback with a reason.
     /// A query without indexable tokens (only stop words) is not sent to the LLM:
     /// the result is status == Ok with no expanded terms.
-    ExpansionResult expand(const std::string& query) const;
+    /// `deadline` bounds the whole expansion (including time the request already
+    /// spent waiting in a queue): the LLM call gets only the remaining time, and if
+    /// less than kMinLlmBudget is left the LLM is not called at all (Fallback).
+    ExpansionResult expand(const std::string& query, Clock::time_point deadline = Clock::time_point::max()) const;
+
+    /// Minimum remaining time budget worth calling the LLM for.
+    static constexpr std::chrono::milliseconds kMinLlmBudget{500};
 
     /// Structured prompt requiring a JSON object {"original": ..., "expanded_terms": [...]}.
     static std::string buildPrompt(const std::string& query, std::size_t maxTerms);

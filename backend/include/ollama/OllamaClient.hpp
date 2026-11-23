@@ -1,5 +1,6 @@
 #pragma once
 
+#include <atomic>
 #include <chrono>
 #include <memory>
 #include <mutex>
@@ -18,9 +19,11 @@ namespace search::ollama {
 /// - Requests run on a dedicated event-loop thread owned by the client, so the
 ///   blocking generate() may be called from any worker thread (never from that loop).
 /// - Every request has a timeout; generate() can never block forever.
-/// - isAvailable() caches the result for `healthTtlSec` seconds. Only one thread
-///   refreshes an expired cache; concurrent callers wait for that refresh (bounded by
-///   the health timeout) instead of using a stale value -> no request storms.
+/// - Availability (GET /api/tags + model present) is refreshed in the BACKGROUND every
+///   `healthTtlSec` seconds by a non-blocking request on the client's own event loop,
+///   so isAvailable() returns immediately and a search never waits for a health check
+///   (only the very first call, before any result exists, checks synchronously).
+///   With healthTtlSec == 0 every call checks synchronously (used by tests).
 /// - A connection-level failure of generate() marks Ollama as unavailable, and a
 ///   timeout triggers an immediate re-check, so the following searches fall back
 ///   immediately instead of waiting for timeouts again.
@@ -31,7 +34,8 @@ public:
     ~OllamaClient() override;
 
     bool isAvailable() override;
-    std::optional<std::string> generate(const std::string& prompt, std::string* error) override;
+    std::optional<std::string> generate(const std::string& prompt, std::string* error,
+                                        double timeoutSec = 0.0) override;
     [[nodiscard]] std::string model() const override { return model_; }
 
     /// Performs an uncached availability check (GET /api/tags + model lookup).
@@ -41,7 +45,10 @@ public:
 
 private:
     drogon::HttpClientPtr makeClient() const;
+    drogon::HttpRequestPtr makeTagsRequest() const;
+    bool interpretTags(drogon::ReqResult result, const drogon::HttpResponsePtr& response) const;
     void storeAvailability(bool available);
+    void refreshAsync();  // runs on loopThread_
 
     std::string baseUrl_;
     std::string origin_;      // scheme://host:port
@@ -58,6 +65,7 @@ private:
     std::chrono::steady_clock::time_point lastCheck_{};
     bool hasCache_ = false;
     bool lastAvailable_ = false;
+    std::atomic<bool> refreshInFlight_{false};
 };
 
 }  // namespace search::ollama

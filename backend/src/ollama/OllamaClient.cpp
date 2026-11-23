@@ -1,5 +1,8 @@
 #include "ollama/OllamaClient.hpp"
 
+#include <algorithm>
+#include <cmath>
+
 #include <drogon/drogon.h>
 
 #include "ollama/OllamaProtocol.hpp"
@@ -47,15 +50,37 @@ OllamaClient::OllamaClient(std::string baseUrl, std::string model, double genera
     origin_ = pathStart == std::string::npos ? baseUrl_ : baseUrl_.substr(0, pathStart);
     pathPrefix_ = pathStart == std::string::npos ? std::string{} : baseUrl_.substr(pathStart);
     loopThread_->run();
+
+    if (healthTtl_.count() > 0) {
+        // Periodic, non-blocking availability refresh on the client's own loop.
+        auto* loop = loopThread_->getLoop();
+        loop->runInLoop([this] { refreshAsync(); });
+        loop->runEvery(healthTtl_.count(), [this] { refreshAsync(); });
+    }
 }
 
-// trantor::EventLoopThread's destructor quits the loop and joins the thread.
-OllamaClient::~OllamaClient() = default;
+OllamaClient::~OllamaClient() {
+    // Stop the event loop (and its timers/callbacks that capture `this`) before any
+    // other member is destroyed.
+    loopThread_.reset();
+}
 
 drogon::HttpClientPtr OllamaClient::makeClient() const {
     // A fresh client per request: independent connections, so concurrent searches
     // do not queue behind each other on one keep-alive connection.
     return drogon::HttpClient::newHttpClient(origin_, loopThread_->getLoop());
+}
+
+drogon::HttpRequestPtr OllamaClient::makeTagsRequest() const {
+    auto request = drogon::HttpRequest::newHttpRequest();
+    request->setMethod(drogon::Get);
+    request->setPath(pathPrefix_ + "/api/tags");
+    return request;
+}
+
+bool OllamaClient::interpretTags(drogon::ReqResult result, const drogon::HttpResponsePtr& response) const {
+    return result == drogon::ReqResult::Ok && response && response->getStatusCode() == drogon::k200OK &&
+           OllamaProtocol::modelListed(std::string(response->body()), model_);
 }
 
 void OllamaClient::storeAvailability(bool available) {
@@ -65,37 +90,46 @@ void OllamaClient::storeAvailability(bool available) {
     hasCache_ = true;
 }
 
+void OllamaClient::refreshAsync() {
+    bool expected = false;
+    if (!refreshInFlight_.compare_exchange_strong(expected, true)) {
+        return;  // previous check still running
+    }
+    auto client = makeClient();
+    client->sendRequest(
+        makeTagsRequest(),
+        [this, client](drogon::ReqResult result, const drogon::HttpResponsePtr& response) {
+            storeAvailability(interpretTags(result, response));
+            refreshInFlight_.store(false);
+        },
+        healthTimeoutSec_);
+}
+
 bool OllamaClient::checkNow() {
     auto client = makeClient();
-    auto request = drogon::HttpRequest::newHttpRequest();
-    request->setMethod(drogon::Get);
-    request->setPath(pathPrefix_ + "/api/tags");
-    const auto [result, response] = client->sendRequest(request, healthTimeoutSec_);
-    const bool available = result == drogon::ReqResult::Ok && response &&
-                           response->getStatusCode() == drogon::k200OK &&
-                           OllamaProtocol::modelListed(std::string(response->body()), model_);
+    const auto [result, response] = client->sendRequest(makeTagsRequest(), healthTimeoutSec_);
+    const bool available = interpretTags(result, response);
     storeAvailability(available);
     return available;
 }
 
 bool OllamaClient::isAvailable() {
-    auto fresh = [this](bool& value) {
+    {
         std::lock_guard lock(cacheMutex_);
-        if (hasCache_ && std::chrono::steady_clock::now() - lastCheck_ < healthTtl_) {
-            value = lastAvailable_;
-            return true;
+        const bool fresh = std::chrono::steady_clock::now() - lastCheck_ < healthTtl_;
+        // With background refresh enabled any cached value is used immediately;
+        // without it (TTL == 0) only a fresh one.
+        if (hasCache_ && (healthTtl_.count() > 0 || fresh)) {
+            return lastAvailable_;
         }
-        return false;
-    };
-    bool value = false;
-    if (fresh(value)) {
-        return value;
     }
-    // Only one thread performs the HTTP check; the others wait for it and then
-    // read the refreshed cache (double-checked), never a stale value.
+    // No result yet (or TTL == 0): one synchronous check, serialized between threads.
     std::lock_guard refresh(refreshMutex_);
-    if (healthTtl_.count() > 0 && fresh(value)) {
-        return value;
+    if (healthTtl_.count() > 0) {
+        std::lock_guard lock(cacheMutex_);
+        if (hasCache_) {
+            return lastAvailable_;
+        }
     }
     try {
         return checkNow();
@@ -106,12 +140,14 @@ bool OllamaClient::isAvailable() {
     }
 }
 
-std::optional<std::string> OllamaClient::generate(const std::string& prompt, std::string* error) {
+std::optional<std::string> OllamaClient::generate(const std::string& prompt, std::string* error,
+                                                  double timeoutSec) {
     auto setError = [error](const std::string& message) {
         if (error != nullptr) {
             *error = message;
         }
     };
+    const double timeout = timeoutSec > 0.0 ? std::min(timeoutSec, generateTimeoutSec_) : generateTimeoutSec_;
     auto client = makeClient();
     auto request = drogon::HttpRequest::newHttpRequest();
     request->setMethod(drogon::Post);
@@ -119,19 +155,18 @@ std::optional<std::string> OllamaClient::generate(const std::string& prompt, std
     request->setContentTypeCode(drogon::CT_APPLICATION_JSON);
     request->setBody(OllamaProtocol::buildGenerateRequest(model_, prompt));
 
-    const auto [result, response] = client->sendRequest(request, generateTimeoutSec_);
+    const auto [result, response] = client->sendRequest(request, timeout);
     if (result != drogon::ReqResult::Ok || !response) {
-        const std::string reason = "Ollama request failed: " + describe(result);
         if (result == drogon::ReqResult::Timeout) {
-            // Busy model or dead host? Re-check now so the next searches know.
+            // Busy model or dead host? Re-check so the next searches know.
             std::lock_guard refresh(refreshMutex_);
             checkNow();
+            setError("Ollama did not answer within " + std::to_string(static_cast<int>(std::lround(timeout))) +
+                     " s");
         } else {
             storeAvailability(false);  // connection-level failure: fail fast next time
+            setError("Ollama request failed: " + describe(result));
         }
-        setError(result == drogon::ReqResult::Timeout
-                     ? "Ollama did not answer within " + std::to_string(static_cast<int>(generateTimeoutSec_)) + " s"
-                     : reason);
         return std::nullopt;
     }
     if (response->getStatusCode() != drogon::k200OK) {

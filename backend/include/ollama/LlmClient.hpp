@@ -17,8 +17,10 @@ public:
 
     /// Sends `prompt` and returns the generated text, or std::nullopt on any
     /// error (then `error`, if not null, receives a human-readable reason).
-    /// Must never block longer than the configured timeout.
-    virtual std::optional<std::string> generate(const std::string& prompt, std::string* error) = 0;
+    /// Must never block longer than min(timeoutSec, configured timeout);
+    /// timeoutSec <= 0 means "use the configured timeout".
+    virtual std::optional<std::string> generate(const std::string& prompt, std::string* error,
+                                                double timeoutSec = 0.0) = 0;
 
     /// Model name used for generation (for logs / health output).
     [[nodiscard]] virtual std::string model() const = 0;

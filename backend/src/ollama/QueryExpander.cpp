@@ -152,7 +152,7 @@ std::optional<std::vector<std::string>> QueryExpander::parseResponse(const std::
     return terms;
 }
 
-ExpansionResult QueryExpander::expand(const std::string& query) const {
+ExpansionResult QueryExpander::expand(const std::string& query, Clock::time_point deadline) const {
     const auto start = std::chrono::steady_clock::now();
     ExpansionResult result;
     result.original = query;
@@ -176,8 +176,17 @@ ExpansionResult QueryExpander::expand(const std::string& query) const {
         if (!client_->isAvailable()) {
             return finish(ExpansionStatus::Fallback, "Ollama is unavailable");
         }
+        double budgetSec = 0.0;  // 0 = client's configured timeout
+        if (deadline != Clock::time_point::max()) {
+            const auto remaining = deadline - Clock::now();
+            if (remaining < kMinLlmBudget) {
+                return finish(ExpansionStatus::Fallback,
+                              "LLM is busy: no free slot within the time budget");
+            }
+            budgetSec = std::chrono::duration<double>(remaining).count();
+        }
         std::string error;
-        const auto text = client_->generate(buildPrompt(query, maxTerms_), &error);
+        const auto text = client_->generate(buildPrompt(query, maxTerms_), &error, budgetSec);
         if (!text) {
             return finish(ExpansionStatus::Fallback, error.empty() ? "Ollama request failed" : error);
         }
