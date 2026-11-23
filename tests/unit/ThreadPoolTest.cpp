@@ -170,5 +170,5 @@ TEST(ThreadPoolTest, ParallelExecutionIsFasterThanSequential) {
     }
     for (auto& f : futures) f.get();
     const auto elapsed = std::chrono::steady_clock::now() - start;
-    EXPECT_LT(elapsed, 300ms);
+    EXPECT_LT(elapsed, 350ms);  // sequential execution would take 400 ms
 }

@@ -145,6 +145,14 @@ TEST(InvertedIndexTest, MakeSnippetCollapsesWhitespace) {
     EXPECT_EQ(snippet, "alpha beta gamma");
 }
 
+TEST(InvertedIndexTest, ReplacingDocumentDoesNotDoubleCountTokens) {
+    InvertedIndex index;
+    index.setDocument({0, "d0", "d0", 10, 100});
+    index.setDocument({0, "d0", "d0", 4, 40});
+    EXPECT_EQ(index.documentCount(), 1u);
+    EXPECT_EQ(index.totalTokens(), 4u);
+}
+
 TEST(InvertedIndexTest, DocumentLengthsAreExposed) {
     InvertedIndex index;
     index.addDocument("d0", "d0", "one two three");

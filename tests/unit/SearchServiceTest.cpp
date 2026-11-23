@@ -1,6 +1,8 @@
 #include <gtest/gtest.h>
 
+#include <future>
 #include <memory>
+#include <thread>
 
 #include "TestUtils.hpp"
 #include "search/SearchService.hpp"
@@ -112,6 +114,64 @@ TEST(SearchServiceTest, RebuildReplacesIndexAndUpdatesStats) {
     EXPECT_EQ(second.documentsIndexed, 4u);
     EXPECT_EQ(service.stats().threadsUsed, 4u);
     EXPECT_EQ(service.stats().documents, 4u);
+}
+
+TEST(SearchServiceTest, RoutesSearchesByExpansion) {
+    TempDir dir;
+    writeDocs(dir);
+    auto cfg = makeConfig(dir.path());
+    cfg.llmThreads = 1;
+    cfg.llmMaxQueue = 2;
+    SearchService service(cfg, std::make_shared<FakeLlmClient>());
+    EXPECT_EQ(service.route(false), SearchService::Route::Plain);
+    EXPECT_EQ(service.route(true), SearchService::Route::Llm);
+    EXPECT_EQ(&service.poolFor(SearchService::Route::Llm), &service.llmPool());
+    EXPECT_EQ(&service.poolFor(SearchService::Route::Plain), &service.requestPool());
+    EXPECT_EQ(&service.poolFor(SearchService::Route::Overloaded), &service.requestPool());
+
+    // Occupy the single LLM worker and fill its queue -> new LLM searches are overloaded.
+    std::promise<void> release;
+    auto gate = release.get_future().share();
+    for (int i = 0; i < 3; ++i) {
+        service.llmPool().post([gate] { gate.wait(); });
+    }
+    for (int i = 0; i < 100 && service.llmPool().pendingTasks() < 2; ++i) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+    EXPECT_EQ(service.route(true), SearchService::Route::Overloaded);
+    EXPECT_EQ(service.route(false), SearchService::Route::Plain);  // plain searches unaffected
+    release.set_value();
+    service.llmPool().waitAll();
+    EXPECT_EQ(service.route(true), SearchService::Route::Llm);
+}
+
+TEST(SearchServiceTest, OverloadedPipelineFallsBackImmediately) {
+    TempDir dir;
+    writeDocs(dir);
+    auto llm = std::make_shared<FakeLlmClient>();
+    SearchService service(makeConfig(dir.path()), llm);
+    ASSERT_EQ(service.buildIndex(1).error, IndexBuildResult::Error::None);
+    const auto result = service.runPipeline("car", 10, true, SearchService::Clock::now(), /*overloaded=*/true);
+    EXPECT_EQ(result.expansion.status, ExpansionStatus::Fallback);
+    EXPECT_NE(result.expansion.fallbackReason.find("overloaded"), std::string::npos);
+    EXPECT_EQ(llm->calls.load(), 0);
+    EXPECT_EQ(result.search.results.size(), 1u);
+}
+
+TEST(SearchServiceTest, BudgetIsCountedFromArrival) {
+    TempDir dir;
+    writeDocs(dir);
+    auto llm = std::make_shared<FakeLlmClient>();
+    auto cfg = makeConfig(dir.path());
+    cfg.ollamaTimeoutSec = 5.0;
+    SearchService service(cfg, llm);
+    ASSERT_EQ(service.buildIndex(1).error, IndexBuildResult::Error::None);
+    // The request "arrived" 6 s ago: its 5 s budget is already spent in the queue.
+    const auto old = SearchService::Clock::now() - std::chrono::seconds(6);
+    const auto result = service.runPipeline("car", 10, true, old);
+    EXPECT_EQ(result.expansion.status, ExpansionStatus::Fallback);
+    EXPECT_EQ(llm->calls.load(), 0);
+    EXPECT_GE(result.totalTimeMs, 6000.0);  // total time includes the waiting time
 }
 
 TEST(SearchServiceTest, AsyncBuildCompletes) {

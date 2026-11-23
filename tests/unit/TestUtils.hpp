@@ -57,10 +57,12 @@ public:
 
     bool isAvailable() override { return available.load(); }
 
-    std::optional<std::string> generate(const std::string& prompt, std::string* error) override {
+    std::optional<std::string> generate(const std::string& prompt, std::string* error,
+                                        double timeoutSec = 0.0) override {
         ++calls;
         std::lock_guard lock(mutex_);
         lastPrompt_ = prompt;
+        lastTimeout_ = timeoutSec;
         if (!response_ && error != nullptr) {
             *error = error_;
         }
@@ -74,11 +76,17 @@ public:
         return lastPrompt_;
     }
 
+    double lastTimeout() {
+        std::lock_guard lock(mutex_);
+        return lastTimeout_;
+    }
+
 private:
     std::mutex mutex_;
     std::optional<std::string> response_ = std::string(R"({"original":"q","expanded_terms":[]})");
     std::string error_;
     std::string lastPrompt_;
+    double lastTimeout_ = -1.0;
 };
 
 }  // namespace search::test

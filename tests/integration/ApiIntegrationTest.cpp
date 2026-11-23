@@ -5,6 +5,11 @@
 
 #include <gtest/gtest.h>
 
+#include <arpa/inet.h>
+#include <netinet/in.h>
+#include <sys/socket.h>
+#include <unistd.h>
+
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
@@ -32,7 +37,24 @@ using namespace std::chrono_literals;
 
 namespace {
 
-constexpr unsigned short kPort = 18089;
+/// Asks the OS for a free TCP port on the loopback interface.
+unsigned short pickFreePort() {
+    const int fd = ::socket(AF_INET, SOCK_STREAM, 0);
+    sockaddr_in addr{};
+    addr.sin_family = AF_INET;
+    addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    addr.sin_port = 0;
+    socklen_t len = sizeof(addr);
+    unsigned short port = 18089;  // fallback
+    if (fd >= 0 && ::bind(fd, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) == 0 &&
+        ::getsockname(fd, reinterpret_cast<sockaddr*>(&addr), &len) == 0) {
+        port = ntohs(addr.sin_port);
+    }
+    if (fd >= 0) ::close(fd);
+    return port;
+}
+
+const unsigned short kPort = pickFreePort();
 const std::string kBaseUrl = "http://127.0.0.1:" + std::to_string(kPort);
 
 enum class MockMode { Up, Down, Garbage, Slow };
@@ -79,7 +101,10 @@ HttpResult http(drogon::HttpMethod method, const std::string& path, const std::o
     return out;
 }
 
-HttpResult post(const std::string& path, const json& body) {
+HttpResult post(const std::string& path, json body) {
+    if (path == "/api/search" && body.is_object() && !body.contains("mode")) {
+        body["mode"] = "keyword";  // required by the REST contract
+    }
     return http(drogon::Post, path, body.dump());
 }
 
@@ -147,8 +172,8 @@ void registerMockOllama() {
                     cb(resp);
                     return;
                 case MockMode::Slow:
-                    // Reply after 3 s without blocking the event loop.
-                    drogon::app().getLoop()->runAfter(3.0, [cb = std::move(cb), resp] {
+                    // Reply after 5 s without blocking the event loop.
+                    drogon::app().getLoop()->runAfter(5.0, [cb = std::move(cb), resp] {
                         resp->setBody(R"({"response":"{\"expanded_terms\":[\"late\"]}"})");
                         cb(resp);
                     });
@@ -225,8 +250,10 @@ TEST(ApiIntegration, HealthBeforeIndexing) {
     EXPECT_NE(r.contentType.find("application/json"), std::string::npos);
     EXPECT_EQ(r.body["status"], "ok");
     EXPECT_EQ(r.body["ollama"], true);
-    EXPECT_EQ(r.body["index_ready"], false);
-    EXPECT_EQ(r.body["model"], "qwen2.5:3b");
+    EXPECT_EQ(r.body.size(), 2u);  // exactly {"status", "ollama"} as in the contract
+    const auto stats = http(drogon::Get, "/api/stats");
+    EXPECT_EQ(stats.body["ollama_model"], "qwen2.5:3b");
+    EXPECT_EQ(stats.body["index_ready"], false);
 }
 
 TEST(ApiIntegration, HealthReportsOllamaDown) {
@@ -321,10 +348,11 @@ TEST(ApiIntegration, SearchValidation) {
         {R"({"query": 42})", "invalid_query"},
         {R"({"query": "car", "mode": "semantic"})", "invalid_mode"},
         {R"({"query": "car", "mode": 1})", "invalid_mode"},
-        {R"({"query": "car", "limit": 0})", "invalid_limit"},
-        {R"({"query": "car", "limit": 1000})", "invalid_limit"},
-        {R"({"query": "car", "limit": "5"})", "invalid_limit"},
-        {R"({"query": "car", "expand": "yes"})", "invalid_expand"},
+        {R"({"query": "car"})", "invalid_mode"},
+        {R"({"query": "car", "mode": "keyword", "limit": 0})", "invalid_limit"},
+        {R"({"query": "car", "mode": "keyword", "limit": 1000})", "invalid_limit"},
+        {R"({"query": "car", "mode": "keyword", "limit": "5"})", "invalid_limit"},
+        {R"({"query": "car", "mode": "keyword", "expand": "yes"})", "invalid_expand"},
         {R"({"query": ")" + std::string(1001, 'a') + R"("})", "invalid_query"},
     };
     for (const auto& c : cases) {
@@ -384,7 +412,7 @@ TEST(ApiIntegration, SearchFallbackOnInvalidLlmAnswer) {
 }
 
 TEST(ApiIntegration, SearchFallbackOnLlmTimeout) {
-    gMockMode = MockMode::Slow;  // mock answers after 3 s, client timeout is 1 s
+    gMockMode = MockMode::Slow;  // mock answers after 5 s, client timeout is 1 s
     const auto start = std::chrono::steady_clock::now();
     const auto r = post("/api/search", {{"query", "car"}});
     const auto elapsed = std::chrono::steady_clock::now() - start;
@@ -392,7 +420,7 @@ TEST(ApiIntegration, SearchFallbackOnLlmTimeout) {
     ASSERT_EQ(r.status, 200) << r.raw;
     EXPECT_EQ(r.body["expansion_status"], "fallback");
     EXPECT_LT(elapsed, 2900ms);
-    std::this_thread::sleep_for(2500ms);  // let the slow mock reply drain
+    std::this_thread::sleep_for(5500ms);  // let the slow mock reply drain
 }
 
 TEST(ApiIntegration, SearchWithExpansionDisabled) {
@@ -404,10 +432,13 @@ TEST(ApiIntegration, SearchWithExpansionDisabled) {
     EXPECT_EQ(r.body["results"].size(), 3u);
 }
 
-TEST(ApiIntegration, SearchWithoutModeDefaultsToKeyword) {
-    const auto r = post("/api/search", {{"query", "galaxies"}, {"expand", false}});
-    ASSERT_EQ(r.status, 200);
-    EXPECT_EQ(r.body["total_matches"], 20);
+TEST(ApiIntegration, SearchRequiresMode) {
+    const auto missing = http(drogon::Post, "/api/search", std::string(R"({"query":"galaxies","expand":false})"));
+    EXPECT_EQ(missing.status, 400);
+    EXPECT_EQ(missing.body["error"], "invalid_mode");
+    const auto ok = post("/api/search", {{"query", "galaxies"}, {"mode", "keyword"}, {"expand", false}});
+    ASSERT_EQ(ok.status, 200);
+    EXPECT_EQ(ok.body["total_matches"], 20);
 }
 
 TEST(ApiIntegration, SearchStopWordsOnlyReturnsEmpty) {
@@ -468,12 +499,50 @@ TEST(ApiIntegration, UnknownRouteAndWrongMethod) {
     EXPECT_EQ(missing.body["error"], "not_found");
     const auto wrongMethod = http(drogon::Get, "/api/search");
     EXPECT_EQ(wrongMethod.status, 405);
+    EXPECT_NE(wrongMethod.contentType.find("application/json"), std::string::npos);
+    EXPECT_EQ(wrongMethod.body["error"], "method_not_allowed");
 }
 
 TEST(ApiIntegration, ServesWebUi) {
     const auto r = http(drogon::Get, "/");
     EXPECT_EQ(r.status, 200);
     EXPECT_NE(r.raw.find("Search UI"), std::string::npos);
+}
+
+TEST(ApiIntegration, LlmLoadDoesNotBlockSearchesWithoutExpansion) {
+    // LLM_THREADS=2, LLM_MAX_QUEUE=3 in this test server; the mock LLM needs 5 s
+    // while the client timeout is 1 s.
+    gMockMode = MockMode::Slow;
+    std::vector<std::future<std::pair<HttpResult, double>>> llmCalls;
+    for (int i = 0; i < 10; ++i) {
+        llmCalls.push_back(std::async(std::launch::async, [i] {
+            const auto start = std::chrono::steady_clock::now();
+            auto r = post("/api/search", {{"query", "car " + std::to_string(i)}, {"expand", true}});
+            return std::make_pair(r, std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count());
+        }));
+    }
+    std::this_thread::sleep_for(200ms);
+    // While 10 LLM searches are in flight, searches without expansion stay fast.
+    for (int i = 0; i < 5; ++i) {
+        const auto start = std::chrono::steady_clock::now();
+        const auto r = post("/api/search", {{"query", "galaxies"}, {"expand", false}});
+        const auto elapsed = std::chrono::steady_clock::now() - start;
+        EXPECT_EQ(r.status, 200);
+        EXPECT_LT(elapsed, 500ms) << "plain search was blocked by LLM searches";
+    }
+    int overloaded = 0;
+    for (auto& f : llmCalls) {
+        const auto [r, seconds] = f.get();
+        ASSERT_EQ(r.status, 200);
+        EXPECT_EQ(r.body["expansion_status"], "fallback");
+        EXPECT_FALSE(r.body["results"].empty());
+        // The budget (1 s) is counted from arrival: waiting in the queue is included.
+        EXPECT_LT(seconds, 4.0);
+        if (r.body["fallback_reason"].get<std::string>().find("overloaded") != std::string::npos) ++overloaded;
+    }
+    EXPECT_GE(overloaded, 1) << "requests beyond LLM_MAX_QUEUE must fall back immediately";
+    gMockMode = MockMode::Up;
+    std::this_thread::sleep_for(5500ms);  // let the slow mock replies drain
 }
 
 // ============================================================================ WebSocket
@@ -567,7 +636,7 @@ TEST(ApiIntegration, WebSocketSecondSearchWhileBusyIsRejected) {
     EXPECT_EQ(all[1]["stage"], "query_expansion");
     EXPECT_EQ(all[2]["stage"], "keyword_search");
     EXPECT_EQ(all[3]["stage"], "done");
-    std::this_thread::sleep_for(2500ms);
+    std::this_thread::sleep_for(5500ms);
 }
 
 TEST(ApiIntegration, ManyWebSocketClientsAreIndependent) {
@@ -618,6 +687,29 @@ TEST(OllamaClientIntegration, TalksToMockServer) {
     EXPECT_FALSE(wrongModel.isAvailable());
 }
 
+TEST(OllamaClientIntegration, BackgroundRefreshNeverBlocksCallers) {
+    gMockMode = MockMode::Up;
+    // TTL 0.3 s: availability is refreshed in the background on the client's loop.
+    search::ollama::OllamaClient client(kBaseUrl + "/mock-ollama", "qwen2.5:3b", 5.0, 1.0, 0.3);
+    EXPECT_TRUE(client.isAvailable());
+    gMockMode = MockMode::Down;
+    bool sawDown = false;
+    for (int i = 0; i < 40 && !sawDown; ++i) {
+        const auto start = std::chrono::steady_clock::now();
+        sawDown = !client.isAvailable();
+        EXPECT_LT(std::chrono::steady_clock::now() - start, 50ms);  // answered from the cache
+        std::this_thread::sleep_for(50ms);
+    }
+    EXPECT_TRUE(sawDown);
+    gMockMode = MockMode::Up;
+    bool sawUp = false;
+    for (int i = 0; i < 40 && !sawUp; ++i) {
+        sawUp = client.isAvailable();
+        std::this_thread::sleep_for(50ms);
+    }
+    EXPECT_TRUE(sawUp);
+}
+
 // ============================================================================ main
 
 int main(int argc, char** argv) {
@@ -628,6 +720,8 @@ int main(int argc, char** argv) {
     config.datasetPath = gDatasetDir.string();
     config.frontendPath = gFrontendDir.string();
     config.requestThreads = 8;
+    config.llmThreads = 2;
+    config.llmMaxQueue = 3;
     config.indexThreads = 2;
     config.autoIndex = false;
     config.ollamaUrl = kBaseUrl + "/mock-ollama";

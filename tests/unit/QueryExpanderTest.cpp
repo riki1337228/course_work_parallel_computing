@@ -128,6 +128,27 @@ TEST(QueryExpanderTest, StopWordOnlyQueryIsNotSentToLlm) {
     EXPECT_EQ(llm->calls.load(), 0);
 }
 
+TEST(QueryExpanderTest, ExpiredDeadlineFallsBackWithoutCallingLlm) {
+    auto llm = std::make_shared<FakeLlmClient>();
+    QueryExpander expander(llm, 6);
+    const auto result = expander.expand("car", QueryExpander::Clock::now() - std::chrono::seconds(1));
+    EXPECT_EQ(result.status, ExpansionStatus::Fallback);
+    EXPECT_NE(result.fallbackReason.find("busy"), std::string::npos);
+    EXPECT_EQ(llm->calls.load(), 0);
+}
+
+TEST(QueryExpanderTest, RemainingBudgetIsPassedAsTimeout) {
+    auto llm = std::make_shared<FakeLlmClient>();
+    llm->setResponse(R"({"expanded_terms":["automobile"]})");
+    QueryExpander expander(llm, 6);
+    const auto result = expander.expand("car", QueryExpander::Clock::now() + std::chrono::seconds(10));
+    EXPECT_EQ(result.status, ExpansionStatus::Ok);
+    EXPECT_GT(llm->lastTimeout(), 9.0);
+    EXPECT_LE(llm->lastTimeout(), 10.0);
+    expander.expand("car");  // no deadline -> client default
+    EXPECT_DOUBLE_EQ(llm->lastTimeout(), 0.0);
+}
+
 TEST(QueryExpanderTest, StatusToString) {
     EXPECT_EQ(search::ollama::toString(ExpansionStatus::Ok), "ok");
     EXPECT_EQ(search::ollama::toString(ExpansionStatus::Fallback), "fallback");
