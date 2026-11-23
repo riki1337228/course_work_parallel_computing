@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <string>
+#include <vector>
 
 namespace search::core {
 
@@ -15,7 +16,8 @@ struct Config {
     std::string listenAddress = "0.0.0.0";      ///< LISTEN_ADDRESS
     unsigned short port = 8080;                 ///< SERVER_PORT
     std::size_t ioThreads = 4;                  ///< IO_THREADS: Drogon event-loop threads
-    std::size_t requestThreads = 16;            ///< REQUEST_THREADS: worker pool for search requests
+    std::size_t requestThreads = 16;            ///< REQUEST_THREADS: worker pool for searches without LLM
+    std::size_t maxPendingRequests = 1024;      ///< MAX_PENDING_REQUESTS: queue limit -> 503 server_busy
     std::string frontendPath = "/app/frontend"; ///< FRONTEND_PATH: static Web UI files
 
     // Indexing
@@ -36,10 +38,16 @@ struct Config {
     double ollamaHealthTimeoutSec = 2.0;           ///< OLLAMA_HEALTH_TIMEOUT_SEC
     double ollamaHealthTtlSec = 5.0;               ///< OLLAMA_HEALTH_TTL_SEC: availability cache TTL
     std::size_t maxExpansionTerms = 6;             ///< MAX_EXPANSION_TERMS
+    std::size_t llmThreads = 4;                    ///< LLM_THREADS: max concurrent searches waiting for Ollama
+    std::size_t llmMaxQueue = 32;                  ///< LLM_MAX_QUEUE: queued LLM searches before immediate fallback
 
     std::string logLevel = "INFO";              ///< LOG_LEVEL: TRACE|DEBUG|INFO|WARN|ERROR
 
+    /// Problems found while reading the environment (invalid values were ignored).
+    std::vector<std::string> warnings;
+
     /// Builds a configuration from defaults overridden by environment variables.
+    /// Malformed, negative or out-of-range values keep the default and add a warning.
     static Config fromEnvironment();
 };
 

@@ -4,6 +4,7 @@
 #include <cctype>
 #include <cstdlib>
 #include <stdexcept>
+#include <string>
 #include <thread>
 
 namespace search::core {
@@ -20,27 +21,43 @@ void readString(const char* name, std::string& target) {
     }
 }
 
+/// Reads an integer in [minValue, maxValue]. Malformed, negative or out-of-range
+/// values keep the default and are reported in `warnings`.
 template <typename T>
-void readUnsigned(const char* name, T& target, T minValue) {
-    if (const char* value = rawEnv(name)) {
-        try {
-            const unsigned long long parsed = std::stoull(value);
-            target = std::max(static_cast<T>(parsed), minValue);
-        } catch (const std::exception&) {
-            // keep default on malformed value
+void readUnsigned(const char* name, T& target, long long minValue, long long maxValue,
+                  std::vector<std::string>& warnings) {
+    const char* value = rawEnv(name);
+    if (value == nullptr) {
+        return;
+    }
+    try {
+        std::size_t used = 0;
+        const long long parsed = std::stoll(value, &used);
+        if (used != std::char_traits<char>::length(value) || parsed < minValue || parsed > maxValue) {
+            throw std::out_of_range("range");
         }
+        target = static_cast<T>(parsed);
+    } catch (const std::exception&) {
+        warnings.push_back(std::string(name) + "=" + value + " ignored (expected an integer in [" +
+                           std::to_string(minValue) + ", " + std::to_string(maxValue) + "]), using " +
+                           std::to_string(target));
     }
 }
 
-void readDouble(const char* name, double& target) {
-    if (const char* value = rawEnv(name)) {
-        try {
-            const double parsed = std::stod(value);
-            if (parsed >= 0.0) {
-                target = parsed;
-            }
-        } catch (const std::exception&) {
+void readDouble(const char* name, double& target, std::vector<std::string>& warnings) {
+    const char* value = rawEnv(name);
+    if (value == nullptr) {
+        return;
+    }
+    try {
+        std::size_t used = 0;
+        const double parsed = std::stod(value, &used);
+        if (used != std::char_traits<char>::length(value) || parsed < 0.0 || parsed > 86400.0) {
+            throw std::out_of_range("range");
         }
+        target = parsed;
+    } catch (const std::exception&) {
+        warnings.push_back(std::string(name) + "=" + value + " ignored (expected a non-negative number)");
     }
 }
 
@@ -59,29 +76,34 @@ Config Config::fromEnvironment() {
     Config cfg;
     const auto hw = std::max<std::size_t>(1, std::thread::hardware_concurrency());
     cfg.indexThreads = hw;
+    auto& w = cfg.warnings;
+    constexpr long long kMaxThreads = 1024;
 
     readString("DATASET_PATH", cfg.datasetPath);
     readString("LISTEN_ADDRESS", cfg.listenAddress);
-    readUnsigned<unsigned short>("SERVER_PORT", cfg.port, 1);
-    readUnsigned<std::size_t>("IO_THREADS", cfg.ioThreads, 1);
-    readUnsigned<std::size_t>("REQUEST_THREADS", cfg.requestThreads, 1);
+    readUnsigned("SERVER_PORT", cfg.port, 1, 65535, w);
+    readUnsigned("IO_THREADS", cfg.ioThreads, 1, kMaxThreads, w);
+    readUnsigned("REQUEST_THREADS", cfg.requestThreads, 1, kMaxThreads, w);
+    readUnsigned("MAX_PENDING_REQUESTS", cfg.maxPendingRequests, 1, 1'000'000, w);
     readString("FRONTEND_PATH", cfg.frontendPath);
 
     readBool("AUTO_INDEX", cfg.autoIndex);
-    readUnsigned<std::size_t>("INDEX_THREADS", cfg.indexThreads, 1);
-    readUnsigned<std::size_t>("MAX_INDEX_THREADS", cfg.maxIndexThreads, 1);
+    readUnsigned("MAX_INDEX_THREADS", cfg.maxIndexThreads, 1, kMaxThreads, w);
+    readUnsigned("INDEX_THREADS", cfg.indexThreads, 1, kMaxThreads, w);
 
-    readUnsigned<std::size_t>("DEFAULT_LIMIT", cfg.defaultLimit, 1);
-    readUnsigned<std::size_t>("MAX_LIMIT", cfg.maxLimit, 1);
-    readUnsigned<std::size_t>("MAX_QUERY_LENGTH", cfg.maxQueryLength, 1);
-    readDouble("EXPANDED_TERM_WEIGHT", cfg.expandedTermWeight);
+    readUnsigned("MAX_LIMIT", cfg.maxLimit, 1, 10'000, w);
+    readUnsigned("DEFAULT_LIMIT", cfg.defaultLimit, 1, 10'000, w);
+    readUnsigned("MAX_QUERY_LENGTH", cfg.maxQueryLength, 1, 60'000, w);
+    readDouble("EXPANDED_TERM_WEIGHT", cfg.expandedTermWeight, w);
 
     readString("OLLAMA_URL", cfg.ollamaUrl);
     readString("OLLAMA_MODEL", cfg.ollamaModel);
-    readDouble("OLLAMA_TIMEOUT_SEC", cfg.ollamaTimeoutSec);
-    readDouble("OLLAMA_HEALTH_TIMEOUT_SEC", cfg.ollamaHealthTimeoutSec);
-    readDouble("OLLAMA_HEALTH_TTL_SEC", cfg.ollamaHealthTtlSec);
-    readUnsigned<std::size_t>("MAX_EXPANSION_TERMS", cfg.maxExpansionTerms, 0);
+    readDouble("OLLAMA_TIMEOUT_SEC", cfg.ollamaTimeoutSec, w);
+    readDouble("OLLAMA_HEALTH_TIMEOUT_SEC", cfg.ollamaHealthTimeoutSec, w);
+    readDouble("OLLAMA_HEALTH_TTL_SEC", cfg.ollamaHealthTtlSec, w);
+    readUnsigned("MAX_EXPANSION_TERMS", cfg.maxExpansionTerms, 0, 50, w);
+    readUnsigned("LLM_THREADS", cfg.llmThreads, 1, 256, w);
+    readUnsigned("LLM_MAX_QUEUE", cfg.llmMaxQueue, 1, 100'000, w);
 
     readString("LOG_LEVEL", cfg.logLevel);
 

@@ -14,6 +14,7 @@ add_executable(unit_tests
     unit/OllamaProtocolTest.cpp
     unit/SearchServiceTest.cpp
     unit/ConcurrencyTest.cpp
+    unit/ConfigTest.cpp
 )
 target_link_libraries(unit_tests PRIVATE search_core GTest::gtest GTest::gtest_main)
 gtest_discover_tests(unit_tests DISCOVERY_MODE PRE_TEST DISCOVERY_TIMEOUT 60 PROPERTIES TIMEOUT 300)
