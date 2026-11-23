@@ -57,7 +57,7 @@ unsigned short pickFreePort() {
 const unsigned short kPort = pickFreePort();
 const std::string kBaseUrl = "http://127.0.0.1:" + std::to_string(kPort);
 
-enum class MockMode { Up, Down, Garbage, Slow };
+enum class MockMode { Up, Down, Garbage, Slow, Hang };
 std::atomic<MockMode> gMockMode{MockMode::Up};
 std::atomic<int> gGenerateCalls{0};
 
@@ -145,7 +145,7 @@ void registerMockOllama() {
         "/mock-ollama/api/tags",
         [](const drogon::HttpRequestPtr&, std::function<void(const drogon::HttpResponsePtr&)>&& cb) {
             auto resp = drogon::HttpResponse::newHttpResponse();
-            if (gMockMode == MockMode::Down) {
+            if (gMockMode == MockMode::Down || gMockMode == MockMode::Hang) {
                 resp->setStatusCode(drogon::k503ServiceUnavailable);
             } else {
                 resp->setContentTypeCode(drogon::CT_APPLICATION_JSON);
@@ -170,6 +170,13 @@ void registerMockOllama() {
                 case MockMode::Garbage:
                     resp->setBody(json{{"response", "Sorry, I can't produce JSON."}, {"done", true}}.dump());
                     cb(resp);
+                    return;
+                case MockMode::Hang:
+                    // Never answers in time (like a stopped container whose name no longer resolves).
+                    drogon::app().getLoop()->runAfter(8.0, [cb = std::move(cb), resp] {
+                        resp->setStatusCode(drogon::k503ServiceUnavailable);
+                        cb(resp);
+                    });
                     return;
                 case MockMode::Slow:
                     // Reply after 5 s without blocking the event loop.
@@ -708,6 +715,21 @@ TEST(OllamaClientIntegration, BackgroundRefreshNeverBlocksCallers) {
         std::this_thread::sleep_for(50ms);
     }
     EXPECT_TRUE(sawUp);
+}
+
+TEST(OllamaClientIntegration, GenerateGivesUpWhenOllamaDisappears) {
+    gMockMode = MockMode::Up;
+    search::ollama::OllamaClient client(kBaseUrl + "/mock-ollama", "qwen2.5:3b", 6.0, 1.0, 0.3);
+    ASSERT_TRUE(client.isAvailable());
+    gMockMode = MockMode::Hang;  // generate hangs, availability probe fails
+    const auto start = std::chrono::steady_clock::now();
+    std::string error;
+    EXPECT_FALSE(client.generate("query: car", &error).has_value());
+    const auto elapsed = std::chrono::steady_clock::now() - start;
+    EXPECT_LT(elapsed, 2500ms) << "must not wait for the full 6 s timeout";
+    EXPECT_NE(error.find("unavailable"), std::string::npos) << error;
+    gMockMode = MockMode::Up;
+    std::this_thread::sleep_for(8500ms);  // let the hanging mock reply drain
 }
 
 // ============================================================================ main

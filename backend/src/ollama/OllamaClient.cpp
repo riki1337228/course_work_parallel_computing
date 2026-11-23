@@ -2,6 +2,8 @@
 
 #include <algorithm>
 #include <cmath>
+#include <future>
+#include <utility>
 
 #include <drogon/drogon.h>
 
@@ -155,7 +157,29 @@ std::optional<std::string> OllamaClient::generate(const std::string& prompt, std
     request->setContentTypeCode(drogon::CT_APPLICATION_JSON);
     request->setBody(OllamaProtocol::buildGenerateRequest(model_, prompt));
 
-    const auto [result, response] = client->sendRequest(request, timeout);
+    // Asynchronous request + bounded waiting: while waiting, a fresh availability
+    // probe runs in parallel. If it reports that Ollama has gone away (e.g. the
+    // container was stopped and DNS/connect would only fail at the timeout), the
+    // wait is abandoned right away instead of blocking for the whole budget.
+    using Reply = std::pair<drogon::ReqResult, drogon::HttpResponsePtr>;
+    auto promise = std::make_shared<std::promise<Reply>>();
+    auto future = promise->get_future();
+    const auto started = std::chrono::steady_clock::now();
+    client->sendRequest(
+        request,
+        [promise, client](drogon::ReqResult r, const drogon::HttpResponsePtr& resp) { promise->set_value({r, resp}); },
+        timeout);
+    if (healthTtl_.count() > 0) {
+        loopThread_->getLoop()->queueInLoop([this] { refreshAsync(); });
+    }
+    while (future.wait_for(std::chrono::milliseconds(100)) != std::future_status::ready) {
+        std::lock_guard lock(cacheMutex_);
+        if (hasCache_ && !lastAvailable_ && lastCheck_ > started) {
+            setError("Ollama became unavailable while waiting for the answer");
+            return std::nullopt;  // the pending request is abandoned; it ends at its timeout
+        }
+    }
+    const auto [result, response] = future.get();
     if (result != drogon::ReqResult::Ok || !response) {
         if (result == drogon::ReqResult::Timeout) {
             // Busy model or dead host? Re-check so the next searches know.
