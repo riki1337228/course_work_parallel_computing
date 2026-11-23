@@ -119,12 +119,15 @@ def plot_throughput() -> None:
 
     fig, ax = plt.subplots(figsize=(8, 4.6))
     rps = [r["throughput_rps"] for r in rows]
-    ax.bar(positions, rps, width=0.55, color=SERIES[0])
-    for x, v in zip(positions, rps):
-        ax.annotate(f"{v:.0f}", (x, v), textcoords="offset points", xytext=(0, 4), ha="center", color=INK_2)
+    std = [r.get("throughput_std", 0.0) for r in rows]
+    ax.bar(positions, rps, width=0.55, color=SERIES[0], yerr=std, capsize=4,
+           error_kw={"ecolor": INK_2, "elinewidth": 1})
+    for x, v, e in zip(positions, rps, std):
+        ax.annotate(f"{v:.0f}", (x, v + e), textcoords="offset points", xytext=(0, 4), ha="center", color=INK_2)
     ax.set_xticks(positions, [str(c) for c in clients])
+    repeats = int(rows[0].get("repeats", 1))
     style(ax, "Throughput vs Number of Concurrent Clients", "Concurrent clients",
-          "Throughput, requests/s (keyword search)")
+          f"Throughput, requests/s (mean ± std, {repeats} runs)")
     save(fig, "throughput.png")
 
     if "p95_ms" in rows[0]:
@@ -150,10 +153,11 @@ def plot_llm() -> None:
     rps = [r["throughput_rps"] for r in rows]
     ax.bar(positions, rps, width=0.55, color=SERIES[1])
     for x, v, r in zip(positions, rps, rows):
-        ax.annotate(f"{v:.2f} rps\n{r['avg_latency_ms'] / 1000:.1f} s avg", (x, v), textcoords="offset points",
+        fb = f"\n{int(r['fallbacks'])}/{int(r['requests'])} fallback" if "fallbacks" in r else ""
+        ax.annotate(f"{v:.2f} rps\n{r['avg_latency_ms'] / 1000:.1f} s avg{fb}", (x, v), textcoords="offset points",
                     xytext=(0, 4), ha="center", color=INK_2, fontsize=9)
     ax.set_xticks(positions, [str(c) for c in clients])
-    ax.set_ylim(top=max(rps) * 1.3)
+    ax.set_ylim(top=max(rps) * 1.45)
     style(ax, "Throughput with LLM Query Expansion (Ollama, CPU)", "Concurrent clients", "Throughput, requests/s")
     save(fig, "throughput_llm.png")
 
