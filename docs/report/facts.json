@@ -1,0 +1,141 @@
+{
+ "_sources": {
+  "dataset": "python os.path.getsize over /data/documents in the dataset volume, 23.11.2026",
+  "index": "GET /api/stats after auto-indexing, 23.11.2026",
+  "bulkhead": "scratchpad load test: 24 concurrent expand=true searches + 5 expand=false searches; 'before' = audit 23.11.2026 (AUDIT_REPORT.md), 'after' = after the fix, 23.11.2026",
+  "ollama_down": "docker compose stop ollama, then timed POST /api/search; before = audit 22.11.2026, after = 23.11.2026",
+  "tests": "docker compose --profile tools run --rm tests / tsan / e2e",
+  "phases": "search-server log lines 'Index built: ... phases: list=..., process=..., finalize=...'",
+  "variability": "docs/benchmarks CSV of each run: A = git e10b35e, B..D = runs on 23-24.11 (summaries recorded in the session log), E = current docs/benchmarks",
+  "examples": "live responses of the running system, 24.11.2026 (scratchpad collect_examples.py)",
+  "fresh_clone": "git clone of HEAD 4d5e2c8 into an empty directory, docker compose down -v, docker compose up -d --build, 23.11.2026",
+  "build": "docker compose build --no-cache search-server, 24.11.2026, BuildKit step timings"
+ },
+ "dataset": {
+  "documents": 20000,
+  "bytes": 2200126550,
+  "generation_s": 59
+ },
+ "index": {
+  "unique_terms": 28024,
+  "total_postings": 14632580
+ },
+ "bulkhead": {
+  "before": {
+   "plain_s": 23.174,
+   "llm_max_s": 51.9,
+   "health_ms": 4
+  },
+  "after": {
+   "plain_ms_min": 5,
+   "plain_ms_max": 17,
+   "llm_max_s": 30.0,
+   "health_ms": 3
+  }
+ },
+ "ollama_down": {
+  "before_first_s": 2.0,
+  "after_first_s": 2.03,
+  "after_next_ms": 6
+ },
+ "tests": {
+  "unit": 107,
+  "integration": 31,
+  "ctest": 108,
+  "tsan": 107,
+  "e2e": 27
+ },
+ "phases": {
+  "source": "побудови з 8 і 16 потоками, 24.11.2026",
+  "list_ms": "36–99",
+  "finalize_ms": "27–29"
+ },
+ "bench": {
+  "date": "24.11.2026 (19:19–19:35 UTC)",
+  "host": "Intel Core i5-11400F (6 ядер / 12 потоків), Windows 11",
+  "conditions": "Перед фінальними вимірюваннями Docker перезапущено (чиста пам'ять віртуальної машини, swap не використовується), а сторонні ресурсоємні програми закрито: завантаження CPU хоста у спокої становило близько 10 % (відкритий редактор коду). Попередні прогони виконувалися за інших умов: у прогонах C і D на хості працювала комп'ютерна гра (близько двох ядер CPU), а у віртуальній машині використовувався swap. Тому в аналізі використано лише фінальний прогін E, а розкид між прогонами наведено в табл. 4.2."
+ },
+ "variability": {
+  "rows": [
+   {
+    "run": "A, 22.11",
+    "conditions": "датасет 2,0 ГіБ, код до аудиту, 3 повтори; стан хоста не фіксувався",
+    "t1_s": 16.71,
+    "t8_s": 2.7,
+    "s8": 6.2,
+    "rps10": 3389,
+    "rps50": 3669
+   },
+   {
+    "run": "B, 23.11",
+    "conditions": "2,2 ГБ, 3 повтори; стан хоста не фіксувався",
+    "t1_s": 17.6,
+    "t8_s": 3.28,
+    "s8": 5.37,
+    "rps10": 2161,
+    "rps50": 2127
+   },
+   {
+    "run": "C, 23.11",
+    "conditions": "2,2 ГБ, 6 повторів; на хості працювала гра, swap у VM",
+    "t1_s": 21.34,
+    "t8_s": 4.44,
+    "s8": 4.81,
+    "rps10": 1998,
+    "rps50": 2456
+   },
+   {
+    "run": "D, 24.11",
+    "conditions": "те саме після перезапуску сервера",
+    "t1_s": 22.49,
+    "t8_s": 3.48,
+    "s8": 6.46,
+    "rps10": 1700,
+    "rps50": 1685
+   },
+   {
+    "run": "E, 24.11 (фінальний)",
+    "conditions": "2,2 ГБ, 6 повторів, Docker перезапущено, хост вільний",
+    "t1_s": 17.91,
+    "t8_s": 3.06,
+    "s8": 5.86,
+    "rps10": 2284,
+    "rps50": 2640
+   }
+  ],
+  "comment": "Абсолютні значення різних прогонів відрізняються до ~1,5 раза залежно від стану машини, тому їх можна порівнювати лише в межах одного прогону. Якісні висновки однакові в усіх прогонах: масштабування індексації до 8 потоків, насичення пропускної здатності після ~10 клієнтів, відсутність помилок, стеля LLM близько 0,6 запиту/с."
+ },
+ "fresh_clone": {
+  "text": "Запуск із чистого стану перевірено на фінальній версії коду: свіжий `git clone`, видалені volumes, `docker compose up`. Датасет (2098,2 МіБ) згенеровано за 97 с, модель завантажено з інтернету й прогріто, індекс побудовано автоматично за 6,7 с, уся система стала готовою через 272 с (образи Docker були в кеші збірки; на хості в цей час працювала стороння ресурсоємна програма). Із того самого клону пройшли всі тести: ctest 108/108, ThreadSanitizer 107/107, E2E 27/27. Збірка образу сервера повністю з нуля (`docker compose build --no-cache`) зайняла 96 с: встановлення пакетів 31 с, компіляція Drogon 31 с, компіляція проєкту й тестів 28 с."
+ },
+ "examples": {
+  "date": "24.11.2026",
+  "cli": "$ ./search \"artificial intelligence\" --limit 2\nQuery:    \"artificial intelligence\"\nExpanded: machine learning, deep learning, ai, robotics  [Ollama, 1711.01 ms]\nFound 17653 matching documents, showing 2\nSearch time: 1.691 ms (index), 1712.74 ms (total)\n\n  1. document_017062   score 0.153625\n     ...at the medical school in Dublin reported that the research vessel erodes the deep sea more often th...\n\n  2. document_019735   score 0.150919\n     Artificial intelligence and transformer: a major overview During the conference in Berlin, Alice Shevc...",
+  "items": [
+   {
+    "title": "Побудова індексу та помилка валідації:",
+    "text": "$ curl -X POST localhost:8080/api/index -H \"Content-Type: application/json\" -d '{\"threads\": 8}'\n{\"documents_indexed\":20000,\"status\":\"ok\",\"threads_used\":8,\"time_ms\":2838.416}\n\n$ curl -X POST localhost:8080/api/index -H \"Content-Type: application/json\" -d '{\"threads\": 0}'\n# HTTP 400\n{\"error\":\"invalid_threads\",\"message\":\"threads must be an integer between 1 and 64\"}"
+   },
+   {
+    "title": "Пошук із розширенням запиту:",
+    "text": "$ curl -X POST localhost:8080/api/search -H \"Content-Type: application/json\" \\\n       -d '{\"query\":\"car\",\"mode\":\"keyword\",\"limit\":1}'\n{\n \"expanded_terms\": [\n  \"automobile\",\n  \"vehicle\",\n  \"sedan\"\n ],\n \"expansion_status\": \"ok\",\n \"expansion_time_ms\": 1404.811,\n \"fallback_reason\": null,\n \"query\": \"car\",\n \"results\": [\n  {\n   \"doc_id\": \"document_014624\",\n   \"score\": 0.10150989279776709,\n   \"snippet\": \"...in Mumbai Researchers at the regional museum in Berlin reported that the car drives the...\"\n  }\n ],\n \"search_time_ms\": 1.415,\n \"time_ms\": 1406.315,\n \"total_matches\": 12887\n}"
+   },
+   {
+    "title": "Помилки контракту (немає mode, неправильний метод):",
+    "text": "$ curl -X POST localhost:8080/api/search -d '{\"query\":\"car\"}'\n# HTTP 400\n{\"error\":\"invalid_mode\",\"message\":\"field 'mode' is required and must be \\\"keyword\\\"\"}\n\n$ curl localhost:8080/api/search\n# HTTP 405\n{\"error\":\"method_not_allowed\",\"message\":\"method GET is not allowed for /api/search\"}"
+   },
+   {
+    "title": "Стан і статистика:",
+    "text": "$ curl localhost:8080/api/health\n{\"ollama\":true,\"status\":\"ok\"}\n$ curl localhost:8080/api/stats\n{\"documents\":20000,\"index_build_time_ms\":2838.416,\"index_ready\":true,\"indexing_in_progress\":false,\"ollama_model\":\"qwen2.5:3b\",\"searches_served\":103396,\"threads_used\":8,\"total_postings\":14632580,\"unique_terms\":28024}"
+   },
+   {
+    "title": "WebSocket (послідовність повідомлень сервера):",
+    "text": "> {\"query\":\"climate change glacier\",\"limit\":2}\n< {\"data\": {\"expanded_terms\": [\"iceberg\", \"snow\", \"ocean\", \"forest\"], \"fallback_reason\": null, \"original\": \"climate change glacier\", \"status\": \"ok\", \"time_ms\": 1841.18}, \"stage\": \"query_expansion\"}\n< {\"data\": {\"results\": [{\"doc_id\": \"document_002438\", \"score\": 0.1582502328413852, \"snippet\": \"The ecological climate model: lessons from Torgor During the...\"}, {\"doc_id\": \"document_000160\", \"score\": 0.14703959501283345, \"snippet\": \"Notes about the glacier in Nairobi The history of the climat...\"}], \"time_ms\": 1.858, \"total_matches\": 14822}, \"stage\": \"keyword_search\"}\n< {\"stage\": \"done\"}"
+   },
+   {
+    "title": "Пошук під час недоступності Ollama (контейнер зупинено):",
+    "text": "{\n \"expanded_terms\": [],\n \"expansion_status\": \"fallback\",\n \"expansion_time_ms\": 0.004,\n \"fallback_reason\": \"Ollama is unavailable\",\n \"query\": \"climate change\",\n \"results\": [\n  {\n   \"doc_id\": \"document_011225\",\n   \"score\": 0.12895900233370416,\n   \"snippet\": \"...by the science academy found that 152 percent of respondents mentioned the climate mode...\"\n  }\n ],\n \"search_time_ms\": 0.778,\n \"time_ms\": 0.891,\n \"total_matches\": 7888\n}"
+   }
+  ]
+ }
+}
