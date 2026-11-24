@@ -8,7 +8,7 @@
 а для розширення запитів (Query Expansion) використовує локальну мовну модель **Ollama (qwen2.5:3b)**.
 
 ```bash
-git clone https://github.com/<user>/course_work_parallel_computing.git
+git clone https://github.com/riki1337228/course_work_parallel_computing.git
 cd course_work_parallel_computing
 docker compose up
 # відкрити http://localhost:8080
