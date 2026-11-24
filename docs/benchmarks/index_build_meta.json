@@ -2,7 +2,7 @@
   "server": "http://search-server:8080",
   "client_platform": "Linux-6.6.87.2-microsoft-standard-WSL2-x86_64-with-glibc2.41",
   "client_cpu_count": 12,
-  "timestamp_utc": "2026-11-22T21:35:43Z",
+  "timestamp_utc": "2026-11-24T19:23:27Z",
   "threads": [
     1,
     2,
@@ -10,9 +10,9 @@
     8,
     16
   ],
-  "repeats": 3,
-  "warmup_ms": 2384.343,
+  "repeats": 6,
+  "warmup_ms": 4828.541,
   "documents": 20000,
   "unique_terms": 28024,
-  "total_postings": 14479164
+  "total_postings": 14632580
 }

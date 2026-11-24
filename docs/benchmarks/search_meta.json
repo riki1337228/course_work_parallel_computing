@@ -2,7 +2,15 @@
   "server": "http://search-server:8080",
   "client_platform": "Linux-6.6.87.2-microsoft-standard-WSL2-x86_64-with-glibc2.41",
   "client_cpu_count": 12,
-  "timestamp_utc": "2026-11-22T21:40:03Z",
+  "timestamp_utc": "2026-11-24T19:26:29Z",
+  "llm_clients": [
+    1,
+    2,
+    4,
+    8
+  ],
+  "llm_requests_per_client": 5,
+  "llm_measured_at": "2026-11-24T19:26:29Z",
   "clients": [
     1,
     5,
@@ -11,20 +19,8 @@
     50
   ],
   "requests_per_client": 200,
+  "repeats": 6,
   "limit": 10,
   "queries": 45,
-  "documents": 20000,
-  "llm_clients": [],
-  "llm_requests_per_client": 0,
-  "llm_part": {
-    "csv": "search_throughput_llm.csv",
-    "clients": [
-      1,
-      2,
-      5,
-      10
-    ],
-    "requests_per_client": 3,
-    "note": "LLM part (expand=true) was measured in the previous benchmark run of the same session (2026-11-22, same stack); the keyword part above was re-run with 200 requests/client for longer, more stable measurements."
-  }
+  "documents": 20000
 }
