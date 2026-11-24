@@ -175,6 +175,7 @@
         if (exp.status === "fallback") {
           setStep("expansion", "fallback");
           const reason = exp.fallback_reason ? ` (${exp.fallback_reason})` : "";
+          if (pending) pending.fallbackReason = exp.fallback_reason || "";
           setStatus(`Ollama unavailable — fallback mode${reason}. Searching index…`, "warn");
         } else {
           setStep("expansion", "done");
@@ -195,7 +196,8 @@
         setStep("done", "done");
         const seconds = pending ? ((performance.now() - pending.startedAt) / 1000).toFixed(2) : "?";
         const fallback = steps.expansion.classList.contains("step--fallback");
-        setStatus(fallback ? `Search completed in ${seconds} s (Ollama unavailable — fallback mode).`
+        const why = pending && pending.fallbackReason ? `: ${pending.fallbackReason}` : "";
+        setStatus(fallback ? `Search completed in ${seconds} s (Ollama unavailable — fallback mode${why}).`
                            : `Search completed in ${seconds} s.`, fallback ? "warn" : "ok");
         setSearching(false);
         break;
